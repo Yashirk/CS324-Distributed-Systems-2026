@@ -1,5 +1,6 @@
 package cs324.worker;
 
+import cs324.common.ElectionCandidate;
 import cs324.common.WorkerInfo;
 
 import java.rmi.Remote;
@@ -7,6 +8,8 @@ import java.rmi.RemoteException;
 import java.util.List;
 
 public interface WorkerService extends Remote {
+
+    // BASIC WORKER METHODS
 
     int getWorkerId() throws RemoteException;
 
@@ -19,4 +22,22 @@ public interface WorkerService extends Remote {
     void addNeighbour(WorkerInfo worker) throws RemoteException;
 
     List<WorkerInfo> getNeighbours() throws RemoteException;
+
+
+    // LEADER ELECTION METHODS
+
+    void startElection() throws RemoteException;
+
+    List<ElectionCandidate> processElection(
+            String electionId,
+            int senderId)
+            throws RemoteException;
+
+    void announceCoordinator(
+            String electionId,
+            int coordinatorId,
+            int senderId)
+            throws RemoteException;
+
+    int getCoordinatorId() throws RemoteException;
 }
