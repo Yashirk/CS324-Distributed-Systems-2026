@@ -2,9 +2,6 @@ package cs324.worker;
 
 import cs324.bootstrap.BootstrapService;
 import cs324.common.ElectionCandidate;
-import cs324.common.JobRequest;
-import cs324.common.JobResult;
-import cs324.common.JobType;
 import cs324.common.WorkerInfo;
 
 import java.rmi.RemoteException;
@@ -18,15 +15,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class WorkerNode extends UnicastRemoteObject
         implements WorkerService {
 
-    // =====================================================
+    // ==========================================
     // BASIC WORKER INFORMATION
-    // =====================================================
+    // ==========================================
 
     private final int workerId;
     private final String host;
@@ -40,60 +37,27 @@ public class WorkerNode extends UnicastRemoteObject
     private final AtomicInteger jac =
             new AtomicInteger(0);
 
-    // Current Coordinator
-    // -1 = no coordinator elected yet
+    // Current coordinator
+    // -1 means no coordinator currently known
     private final AtomicInteger coordinatorId =
             new AtomicInteger(-1);
 
-    // Direct neighbours
+    // Direct neighbours of this worker
     private final Map<Integer, WorkerInfo> neighbours =
             new ConcurrentHashMap<>();
 
-    // Prevent duplicate election processing
+    // Elections already processed by this worker
     private final Set<String> processedElections =
             ConcurrentHashMap.newKeySet();
 
-    // Prevent duplicate coordinator messages
+    // Coordinator messages already processed
     private final Set<String> processedCoordinatorMessages =
             ConcurrentHashMap.newKeySet();
 
 
-    // =====================================================
-    // THREADING
-    // =====================================================
-
-    /*
-     * Used when this Worker executes partial jobs.
-     * Multiple partial jobs can therefore run concurrently.
-     */
-    private final ExecutorService workerJobPool =
-            Executors.newCachedThreadPool();
-
-    /*
-     * Used by the Coordinator to send pieces of a job
-     * to multiple workers at the same time.
-     */
-    private final ExecutorService coordinatorJobPool =
-            Executors.newCachedThreadPool();
-
-
-    // =====================================================
-    // COORDINATOR TERM
-    // =====================================================
-
-    /*
-     * Number of COMPLETE client jobs assigned
-     * during the current coordinator term.
-     */
-    private final AtomicInteger termJobCount =
-            new AtomicInteger(0);
-
-    private static final int MAX_JOBS_PER_TERM = 5;
-
-
-    // =====================================================
+    // ==========================================
     // CONSTRUCTOR
-    // =====================================================
+    // ==========================================
 
     public WorkerNode(
             int workerId,
@@ -111,9 +75,9 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
-    // =====================================================
+    // ==========================================
     // BASIC WORKER METHODS
-    // =====================================================
+    // ==========================================
 
     @Override
     public int getWorkerId()
@@ -135,7 +99,8 @@ public class WorkerNode extends UnicastRemoteObject
     public void incrementJAC()
             throws RemoteException {
 
-        int newValue = jac.incrementAndGet();
+        int newValue =
+                jac.incrementAndGet();
 
         System.out.println(
                 "Worker " + workerId +
@@ -162,6 +127,7 @@ public class WorkerNode extends UnicastRemoteObject
             return;
         }
 
+        // Do not add yourself as neighbour
         if (worker.getWorkerId() == workerId) {
             return;
         }
@@ -184,29 +150,34 @@ public class WorkerNode extends UnicastRemoteObject
     public List<WorkerInfo> getNeighbours()
             throws RemoteException {
 
-        List<WorkerInfo> list =
+        List<WorkerInfo> neighbourList =
                 new ArrayList<>(
                         neighbours.values()
                 );
 
-        list.sort(
+        neighbourList.sort(
                 Comparator.comparingInt(
                         WorkerInfo::getWorkerId
                 )
         );
 
-        return list;
+        return neighbourList;
     }
 
 
-    // =====================================================
+    // ==========================================
     // LEADER ELECTION
-    // =====================================================
+    // ==========================================
 
     @Override
     public void startElection()
             throws RemoteException {
 
+        /*
+         * Create a unique ID for this election.
+         * Example:
+         * c9fa84be-....
+         */
         String electionId =
                 UUID.randomUUID().toString();
 
@@ -228,7 +199,10 @@ public class WorkerNode extends UnicastRemoteObject
                 "======================================"
         );
 
-
+        /*
+         * Propagate the election through
+         * the whole reachable worker network.
+         */
         List<ElectionCandidate> candidates =
                 processElection(
                         electionId,
@@ -239,13 +213,14 @@ public class WorkerNode extends UnicastRemoteObject
         if (candidates.isEmpty()) {
 
             System.out.println(
-                    "No election candidates found."
+                    "No candidates found."
             );
 
             return;
         }
 
 
+        System.out.println();
         System.out.println(
                 "Candidates discovered:"
         );
@@ -259,8 +234,18 @@ public class WorkerNode extends UnicastRemoteObject
         }
 
 
-        ElectionCandidate winner = null;
+        /*
+         * Choose winner.
+         *
+         * RULE 1:
+         * Lowest JAC wins.
+         *
+         * RULE 2:
+         * If JAC is equal,
+         * highest Worker ID wins.
+         */
 
+        ElectionCandidate winner = null;
 
         for (ElectionCandidate candidate
                 : candidates) {
@@ -272,15 +257,15 @@ public class WorkerNode extends UnicastRemoteObject
                 continue;
             }
 
-
-            // LOWEST JAC wins
+            // Lower JAC wins
             if (candidate.getJac()
                     < winner.getJac()) {
 
                 winner = candidate;
             }
 
-            // Same JAC -> HIGHEST ID wins
+            // If same JAC,
+            // higher ID wins
             else if (
                     candidate.getJac()
                             == winner.getJac()
@@ -323,6 +308,9 @@ public class WorkerNode extends UnicastRemoteObject
         );
 
 
+        /*
+         * Tell all workers who won.
+         */
         announceCoordinator(
                 electionId,
                 winner.getWorkerId(),
@@ -331,23 +319,34 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
+    // ==========================================
+    // PROCESS ELECTION MESSAGE
+    // ==========================================
+
     @Override
     public List<ElectionCandidate> processElection(
             String electionId,
             int senderId)
             throws RemoteException {
 
+        /*
+         * DUPLICATE PROTECTION
+         *
+         * If this worker has already processed
+         * this election ID, ignore it.
+         */
+
         boolean firstTime =
                 processedElections.add(
                         electionId
                 );
 
-
         if (!firstTime) {
 
             System.out.println(
                     "Worker " + workerId +
-                            " ignored duplicate election."
+                            " ignored duplicate election "
+                            + electionId
             );
 
             return new ArrayList<>();
@@ -364,6 +363,9 @@ public class WorkerNode extends UnicastRemoteObject
                 new ArrayList<>();
 
 
+        /*
+         * Add this worker to election.
+         */
         candidates.add(
                 new ElectionCandidate(
                         workerId,
@@ -372,10 +374,16 @@ public class WorkerNode extends UnicastRemoteObject
         );
 
 
+        /*
+         * Send election to every neighbour.
+         */
         for (WorkerInfo neighbourInfo
                 : neighbours.values()) {
 
-
+            /*
+             * No need to immediately send
+             * message back to sender.
+             */
             if (neighbourInfo.getWorkerId()
                     == senderId) {
 
@@ -391,18 +399,24 @@ public class WorkerNode extends UnicastRemoteObject
                         );
 
 
-                candidates.addAll(
+                List<ElectionCandidate>
+                        neighbourCandidates =
                         neighbour.processElection(
                                 electionId,
                                 workerId
-                        )
+                        );
+
+
+                candidates.addAll(
+                        neighbourCandidates
                 );
 
 
             } catch (Exception e) {
 
                 System.err.println(
-                        "Could not send election to Worker "
+                        "Worker " + workerId +
+                                " could not send election to Worker "
                                 + neighbourInfo.getWorkerId()
                 );
             }
@@ -413,12 +427,21 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
+    // ==========================================
+    // COORDINATOR ANNOUNCEMENT
+    // ==========================================
+
     @Override
     public void announceCoordinator(
             String electionId,
             int newCoordinatorId,
             int senderId)
             throws RemoteException {
+
+        /*
+         * Prevent processing the same
+         * COORDINATOR message more than once.
+         */
 
         boolean firstTime =
                 processedCoordinatorMessages.add(
@@ -427,18 +450,18 @@ public class WorkerNode extends UnicastRemoteObject
 
 
         if (!firstTime) {
+
             return;
         }
 
 
+        /*
+         * Save coordinator locally.
+         */
+
         coordinatorId.set(
                 newCoordinatorId
         );
-
-        /*
-         * Every election begins a new coordinator term.
-         */
-        termJobCount.set(0);
 
 
         System.out.println();
@@ -452,6 +475,11 @@ public class WorkerNode extends UnicastRemoteObject
                         + newCoordinatorId
         );
 
+
+        /*
+         * Propagate coordinator message
+         * to neighbours.
+         */
 
         for (WorkerInfo neighbourInfo
                 : neighbours.values()) {
@@ -482,13 +510,18 @@ public class WorkerNode extends UnicastRemoteObject
             } catch (Exception e) {
 
                 System.err.println(
-                        "Could not send Coordinator message to Worker "
+                        "Worker " + workerId +
+                                " could not send coordinator message to Worker "
                                 + neighbourInfo.getWorkerId()
                 );
             }
         }
     }
 
+
+    // ==========================================
+    // GET CURRENT COORDINATOR
+    // ==========================================
 
     @Override
     public int getCoordinatorId()
@@ -498,823 +531,10 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
-    // =====================================================
-    // FULL JOB SUBMISSION
-    // =====================================================
-
-    @Override
-    public JobResult submitJob(
-            JobRequest job)
-            throws RemoteException {
-
-        if (job == null) {
-
-            throw new RemoteException(
-                    "Job cannot be null."
-            );
-        }
-
-
-        /*
-         * Only the elected Coordinator
-         * may accept complete client jobs.
-         */
-        if (coordinatorId.get() != workerId) {
-
-            throw new RemoteException(
-                    "Worker " + workerId +
-                            " is not the Coordinator. Current Coordinator = Worker "
-                            + coordinatorId.get()
-            );
-        }
-
-
-        int currentTermJob =
-                termJobCount.incrementAndGet();
-
-
-        if (currentTermJob
-                > MAX_JOBS_PER_TERM) {
-
-            termJobCount.decrementAndGet();
-
-            throw new RemoteException(
-                    "Coordinator term has ended. A new election is required."
-            );
-        }
-
-
-        System.out.println();
-        System.out.println(
-                "======================================"
-        );
-
-        System.out.println(
-                "Coordinator Worker " + workerId +
-                        " received job."
-        );
-
-        System.out.println(
-                "Job ID: " + job.getJobId()
-        );
-
-        System.out.println(
-                "Job Type: " + job.getJobType()
-        );
-
-        System.out.println(
-                "Term Job: "
-                        + currentTermJob
-                        + "/"
-                        + MAX_JOBS_PER_TERM
-        );
-
-        System.out.println(
-                "======================================"
-        );
-
-
-        long finalResult =
-                distributeJob(
-                        job
-                );
-
-
-        JobResult result =
-                new JobResult(
-                        job.getJobId(),
-                        finalResult,
-                        workerId
-                );
-
-
-        System.out.println(
-                "Job completed."
-        );
-
-        System.out.println(
-                "Final Result = "
-                        + finalResult
-        );
-
-
-        /*
-         * After 5 complete jobs,
-         * the coordinator term ends.
-         */
-        if (currentTermJob
-                == MAX_JOBS_PER_TERM) {
-
-            System.out.println();
-            System.out.println(
-                    "Coordinator Worker "
-                            + workerId
-                            + " has completed 5 jobs."
-            );
-
-            System.out.println(
-                    "Coordinator term ended."
-            );
-
-            System.out.println(
-                    "Starting new leader election..."
-            );
-
-
-            /*
-             * Start the election after
-             * finishing Job #5.
-             */
-            startElection();
-        }
-
-
-        return result;
-    }
-
-
-    // =====================================================
-    // DISTRIBUTE JOB
-    // =====================================================
-
-    private long distributeJob(
-            JobRequest job)
-            throws RemoteException {
-
-        try {
-
-            /*
-             * Ask Bootstrap for all
-             * currently active workers.
-             */
-            BootstrapService bootstrap =
-                    getBootstrapService();
-
-
-            List<WorkerInfo> workers =
-                    bootstrap.getActiveWorkers();
-
-
-            if (workers.isEmpty()) {
-
-                throw new RemoteException(
-                        "No active workers available."
-                );
-            }
-
-
-            workers.sort(
-                    Comparator.comparingInt(
-                            WorkerInfo::getWorkerId
-                    )
-            );
-
-
-            if (job.getJobType()
-                    == JobType.MAX
-                    ||
-                    job.getJobType()
-                            == JobType.PRIMECOUNT) {
-
-                return distributeNumberListJob(
-                        job,
-                        workers
-                );
-            }
-
-
-            if (job.getJobType()
-                    == JobType.PRIMESUM) {
-
-                return distributePrimeSumJob(
-                        job,
-                        workers
-                );
-            }
-
-
-            throw new RemoteException(
-                    "Unsupported job type."
-            );
-
-
-        } catch (RemoteException e) {
-
-            throw e;
-
-        } catch (Exception e) {
-
-            throw new RemoteException(
-                    "Distributed job processing failed.",
-                    e
-            );
-        }
-    }
-
-
-    // =====================================================
-    // SPLIT MAX / PRIMECOUNT
-    // =====================================================
-
-    private long distributeNumberListJob(
-            JobRequest job,
-            List<WorkerInfo> workers)
-            throws Exception {
-
-        List<Integer> numbers =
-                job.getNumbers();
-
-
-        if (numbers.isEmpty()) {
-
-            throw new RemoteException(
-                    "Number list cannot be empty."
-            );
-        }
-
-
-        /*
-         * Do not create more pieces
-         * than there are numbers.
-         */
-        int workerCount =
-                Math.min(
-                        workers.size(),
-                        numbers.size()
-                );
-
-
-        List<WorkerInfo> selectedWorkers =
-                new ArrayList<>(
-                        workers.subList(
-                                0,
-                                workerCount
-                        )
-                );
-
-
-        List<List<Integer>> chunks =
-                splitNumbers(
-                        numbers,
-                        workerCount
-                );
-
-
-        List<Future<Long>> futures =
-                new ArrayList<>();
-
-
-        for (int i = 0;
-             i < selectedWorkers.size();
-             i++) {
-
-            WorkerInfo target =
-                    selectedWorkers.get(i);
-
-
-            List<Integer> chunk =
-                    chunks.get(i);
-
-
-            JobRequest partialJob =
-                    new JobRequest(
-                            job.getJobType(),
-                            chunk
-                    );
-
-
-            futures.add(
-                    dispatchPartialJob(
-                            target,
-                            partialJob
-                    )
-            );
-        }
-
-
-        if (job.getJobType()
-                == JobType.MAX) {
-
-            long maximum =
-                    Long.MIN_VALUE;
-
-
-            for (Future<Long> future
-                    : futures) {
-
-                maximum =
-                        Math.max(
-                                maximum,
-                                future.get()
-                        );
-            }
-
-
-            return maximum;
-        }
-
-
-        /*
-         * PRIMECOUNT:
-         * Add partial counts.
-         */
-        long totalCount = 0;
-
-
-        for (Future<Long> future
-                : futures) {
-
-            totalCount +=
-                    future.get();
-        }
-
-
-        return totalCount;
-    }
-
-
-    // =====================================================
-    // SPLIT PRIMESUM
-    // =====================================================
-
-    private long distributePrimeSumJob(
-            JobRequest job,
-            List<WorkerInfo> workers)
-            throws Exception {
-
-        int start =
-                job.getStart();
-
-        int end =
-                job.getEnd();
-
-
-        if (start > end) {
-
-            throw new RemoteException(
-                    "PRIMESUM start cannot be greater than end."
-            );
-        }
-
-
-        int totalValues =
-                end - start + 1;
-
-
-        int workerCount =
-                Math.min(
-                        workers.size(),
-                        totalValues
-                );
-
-
-        List<WorkerInfo> selectedWorkers =
-                new ArrayList<>(
-                        workers.subList(
-                                0,
-                                workerCount
-                        )
-                );
-
-
-        List<int[]> ranges =
-                splitRange(
-                        start,
-                        end,
-                        workerCount
-                );
-
-
-        List<Future<Long>> futures =
-                new ArrayList<>();
-
-
-        for (int i = 0;
-             i < selectedWorkers.size();
-             i++) {
-
-            WorkerInfo target =
-                    selectedWorkers.get(i);
-
-
-            int[] range =
-                    ranges.get(i);
-
-
-            JobRequest partialJob =
-                    new JobRequest(
-                            JobType.PRIMESUM,
-                            range[0],
-                            range[1]
-                    );
-
-
-            futures.add(
-                    dispatchPartialJob(
-                            target,
-                            partialJob
-                    )
-            );
-        }
-
-
-        long totalSum = 0;
-
-
-        for (Future<Long> future
-                : futures) {
-
-            totalSum +=
-                    future.get();
-        }
-
-
-        return totalSum;
-    }
-
-
-    // =====================================================
-    // SEND ONE PART TO ONE WORKER
-    // =====================================================
-
-    private Future<Long> dispatchPartialJob(
-            WorkerInfo target,
-            JobRequest partialJob) {
-
-        return coordinatorJobPool.submit(
-                () -> {
-
-                    /*
-                     * If Coordinator gives work
-                     * to ANOTHER worker,
-                     * increase Coordinator's JAC.
-                     *
-                     * This follows the assignment's
-                     * JAC definition.
-                     */
-                    if (target.getWorkerId()
-                            != workerId) {
-
-                        int newJac =
-                                jac.incrementAndGet();
-
-                        System.out.println(
-                                "Coordinator Worker "
-                                        + workerId
-                                        + " allocated work to Worker "
-                                        + target.getWorkerId()
-                                        + ". JAC = "
-                                        + newJac
-                        );
-                    }
-
-
-                    if (target.getWorkerId()
-                            == workerId) {
-
-                        return executePartialJob(
-                                partialJob
-                        );
-                    }
-
-
-                    WorkerService remoteWorker =
-                            getRemoteWorker(
-                                    target
-                            );
-
-
-                    return remoteWorker
-                            .executePartialJob(
-                                    partialJob
-                            );
-                }
-        );
-    }
-
-
-    // =====================================================
-    // WORKER EXECUTES PARTIAL JOB
-    // =====================================================
-
-    @Override
-    public long executePartialJob(
-            JobRequest partialJob)
-            throws RemoteException {
-
-        if (partialJob == null) {
-
-            throw new RemoteException(
-                    "Partial job cannot be null."
-            );
-        }
-
-
-        try {
-
-            /*
-             * Explicit Java thread execution.
-             */
-            Future<Long> future =
-                    workerJobPool.submit(
-                            () ->
-                                    calculatePartialJob(
-                                            partialJob
-                                    )
-                    );
-
-
-            return future.get();
-
-
-        } catch (InterruptedException e) {
-
-            Thread.currentThread()
-                    .interrupt();
-
-            throw new RemoteException(
-                    "Partial job interrupted.",
-                    e
-            );
-
-
-        } catch (ExecutionException e) {
-
-            throw new RemoteException(
-                    "Partial job failed.",
-                    e.getCause()
-            );
-        }
-    }
-
-
-    // =====================================================
-    // ACTUAL CALCULATIONS
-    // =====================================================
-
-    private long calculatePartialJob(
-            JobRequest job)
-            throws RemoteException {
-
-        System.out.println(
-                "Worker " + workerId +
-                        " processing partial "
-                        + job.getJobType()
-                        + " job."
-        );
-
-
-        switch (job.getJobType()) {
-
-            case MAX:
-                return calculateMax(
-                        job.getNumbers()
-                );
-
-            case PRIMECOUNT:
-                return calculatePrimeCount(
-                        job.getNumbers()
-                );
-
-            case PRIMESUM:
-                return calculatePrimeSum(
-                        job.getStart(),
-                        job.getEnd()
-                );
-
-            default:
-                throw new RemoteException(
-                        "Unsupported job type."
-                );
-        }
-    }
-
-
-    private long calculateMax(
-            List<Integer> numbers)
-            throws RemoteException {
-
-        if (numbers.isEmpty()) {
-
-            throw new RemoteException(
-                    "MAX list cannot be empty."
-            );
-        }
-
-
-        long maximum =
-                numbers.get(0);
-
-
-        for (int number : numbers) {
-
-            if (number > maximum) {
-
-                maximum =
-                        number;
-            }
-        }
-
-
-        return maximum;
-    }
-
-
-    private long calculatePrimeCount(
-            List<Integer> numbers) {
-
-        long count = 0;
-
-
-        for (int number : numbers) {
-
-            if (isPrime(number)) {
-
-                count++;
-            }
-        }
-
-
-        return count;
-    }
-
-
-    private long calculatePrimeSum(
-            int start,
-            int end) {
-
-        long sum = 0;
-
-
-        for (int number = start;
-             number <= end;
-             number++) {
-
-            if (isPrime(number)) {
-
-                sum += number;
-            }
-        }
-
-
-        return sum;
-    }
-
-
-    private boolean isPrime(
-            int number) {
-
-        if (number < 2) {
-
-            return false;
-        }
-
-
-        if (number == 2) {
-
-            return true;
-        }
-
-
-        if (number % 2 == 0) {
-
-            return false;
-        }
-
-
-        for (int i = 3;
-             (long) i * i <= number;
-             i += 2) {
-
-            if (number % i == 0) {
-
-                return false;
-            }
-        }
-
-
-        return true;
-    }
-
-
-    // =====================================================
-    // SPLITTING HELPERS
-    // =====================================================
-
-    private List<List<Integer>> splitNumbers(
-            List<Integer> numbers,
-            int parts) {
-
-        List<List<Integer>> result =
-                new ArrayList<>();
-
-
-        int total =
-                numbers.size();
-
-        int baseSize =
-                total / parts;
-
-        int remainder =
-                total % parts;
-
-        int index = 0;
-
-
-        for (int i = 0;
-             i < parts;
-             i++) {
-
-            int thisPartSize =
-                    baseSize
-                            + (i < remainder
-                            ? 1
-                            : 0);
-
-
-            List<Integer> chunk =
-                    new ArrayList<>(
-                            numbers.subList(
-                                    index,
-                                    index
-                                            + thisPartSize
-                            )
-                    );
-
-
-            result.add(
-                    chunk
-            );
-
-
-            index +=
-                    thisPartSize;
-        }
-
-
-        return result;
-    }
-
-
-    private List<int[]> splitRange(
-            int start,
-            int end,
-            int parts) {
-
-        List<int[]> ranges =
-                new ArrayList<>();
-
-
-        int total =
-                end - start + 1;
-
-        int baseSize =
-                total / parts;
-
-        int remainder =
-                total % parts;
-
-        int currentStart =
-                start;
-
-
-        for (int i = 0;
-             i < parts;
-             i++) {
-
-            int thisPartSize =
-                    baseSize
-                            + (i < remainder
-                            ? 1
-                            : 0);
-
-
-            int currentEnd =
-                    currentStart
-                            + thisPartSize
-                            - 1;
-
-
-            ranges.add(
-                    new int[]{
-                            currentStart,
-                            currentEnd
-                    }
-            );
-
-
-            currentStart =
-                    currentEnd + 1;
-        }
-
-
-        return ranges;
-    }
-
-
-    // =====================================================
-    // RMI HELPERS
-    // =====================================================
+    // ==========================================
+    // HELPER:
+    // CONNECT TO REMOTE WORKER
+    // ==========================================
 
     private WorkerService getRemoteWorker(
             WorkerInfo workerInfo)
@@ -1334,26 +554,9 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
-    private BootstrapService getBootstrapService()
-            throws Exception {
-
-        Registry bootstrapRegistry =
-                LocateRegistry.getRegistry(
-                        "localhost",
-                        1099
-                );
-
-
-        return (BootstrapService)
-                bootstrapRegistry.lookup(
-                        "BootstrapService"
-                );
-    }
-
-
-    // =====================================================
-    // CONNECT TO RANDOM NEIGHBOUR
-    // =====================================================
+    // ==========================================
+    // CONNECT TO BOOTSTRAP NEIGHBOUR
+    // ==========================================
 
     private void connectToNeighbour(
             WorkerInfo neighbourInfo) {
@@ -1395,6 +598,10 @@ public class WorkerNode extends UnicastRemoteObject
                     );
 
 
+            /*
+             * Make connection two-way.
+             */
+
             neighbour.addNeighbour(
                     myInfo
             );
@@ -1420,9 +627,9 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
-    // =====================================================
-    // DISPLAY WORKER INFORMATION
-    // =====================================================
+    // ==========================================
+    // PRINT WORKER INFORMATION
+    // ==========================================
 
     private void printWorkerDetails() {
 
@@ -1473,12 +680,22 @@ public class WorkerNode extends UnicastRemoteObject
     }
 
 
-    // =====================================================
+    // ==========================================
     // MAIN
-    // =====================================================
+    // ==========================================
 
-    public static void main(
-            String[] args) {
+    public static void main(String[] args) {
+
+        /*
+         * Worker needs:
+         *
+         * Worker ID
+         * RMI Port
+         *
+         * Example:
+         *
+         * 1 2001
+         */
 
         if (args.length < 2) {
 
@@ -1516,6 +733,10 @@ public class WorkerNode extends UnicastRemoteObject
                     "Worker" + workerId;
 
 
+            /*
+             * Create Worker
+             */
+
             WorkerNode worker =
                     new WorkerNode(
                             workerId,
@@ -1525,11 +746,20 @@ public class WorkerNode extends UnicastRemoteObject
                     );
 
 
+            /*
+             * Create RMI Registry
+             * for this Worker.
+             */
+
             Registry workerRegistry =
                     LocateRegistry.createRegistry(
                             workerPort
                     );
 
+
+            /*
+             * Publish Worker service.
+             */
 
             workerRegistry.rebind(
                     serviceName,
@@ -1540,8 +770,22 @@ public class WorkerNode extends UnicastRemoteObject
             worker.printWorkerDetails();
 
 
+            // ==================================
+            // CONNECT TO BOOTSTRAP
+            // ==================================
+
+            Registry bootstrapRegistry =
+                    LocateRegistry.getRegistry(
+                            "localhost",
+                            1099
+                    );
+
+
             BootstrapService bootstrap =
-                    worker.getBootstrapService();
+                    (BootstrapService)
+                            bootstrapRegistry.lookup(
+                                    "BootstrapService"
+                            );
 
 
             WorkerInfo myInfo =
@@ -1552,6 +796,13 @@ public class WorkerNode extends UnicastRemoteObject
                             serviceName
                     );
 
+
+            /*
+             * Register Worker.
+             *
+             * Bootstrap returns a random
+             * existing active Worker.
+             */
 
             WorkerInfo neighbour =
                     bootstrap.registerWorker(
@@ -1565,6 +816,10 @@ public class WorkerNode extends UnicastRemoteObject
             );
 
 
+            /*
+             * Connect to neighbour.
+             */
+
             worker.connectToNeighbour(
                     neighbour
             );
@@ -1575,6 +830,10 @@ public class WorkerNode extends UnicastRemoteObject
                             " is now ready."
             );
 
+
+            // ==================================
+            // CLEAN SHUTDOWN
+            // ==================================
 
             Runtime.getRuntime()
                     .addShutdownHook(
@@ -1587,11 +846,11 @@ public class WorkerNode extends UnicastRemoteObject
                                     );
 
 
-                                    worker.workerJobPool
-                                            .shutdownNow();
-
-                                    worker.coordinatorJobPool
-                                            .shutdownNow();
+                                    System.out.println(
+                                            "Worker "
+                                                    + workerId
+                                                    + " removed from Bootstrap."
+                                    );
 
 
                                 } catch (Exception ignored) {

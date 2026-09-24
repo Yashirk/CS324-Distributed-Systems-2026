@@ -52,25 +52,10 @@ public interface WorkerService extends Remote {
     // DISTRIBUTED JOB PROCESSING
     // ==========================================
 
-    /*
-     * Client sends a COMPLETE job to the
-     * currently elected Coordinator.
-     *
-     * The Coordinator will split the job
-     * between available workers.
-     */
     JobResult submitJob(
             JobRequest job)
             throws RemoteException;
 
-
-    /*
-     * Coordinator sends a PARTIAL job
-     * to an individual worker.
-     *
-     * The worker calculates its part
-     * and returns one numeric result.
-     */
     long executePartialJob(
             JobRequest partialJob)
             throws RemoteException;
