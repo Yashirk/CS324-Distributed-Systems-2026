@@ -1,6 +1,8 @@
 package cs324.worker;
 
 import cs324.common.ElectionCandidate;
+import cs324.common.JobRequest;
+import cs324.common.JobResult;
 import cs324.common.WorkerInfo;
 
 import java.rmi.Remote;
@@ -9,7 +11,9 @@ import java.util.List;
 
 public interface WorkerService extends Remote {
 
+    // ==========================================
     // BASIC WORKER METHODS
+    // ==========================================
 
     int getWorkerId() throws RemoteException;
 
@@ -24,7 +28,9 @@ public interface WorkerService extends Remote {
     List<WorkerInfo> getNeighbours() throws RemoteException;
 
 
+    // ==========================================
     // LEADER ELECTION METHODS
+    // ==========================================
 
     void startElection() throws RemoteException;
 
@@ -40,4 +46,17 @@ public interface WorkerService extends Remote {
             throws RemoteException;
 
     int getCoordinatorId() throws RemoteException;
+
+
+    // ==========================================
+    // DISTRIBUTED JOB PROCESSING
+    // ==========================================
+
+    JobResult submitJob(
+            JobRequest job)
+            throws RemoteException;
+
+    long executePartialJob(
+            JobRequest partialJob)
+            throws RemoteException;
 }
