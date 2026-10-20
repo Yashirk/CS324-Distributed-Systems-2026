@@ -2,9 +2,9 @@
 package cs324.client;
 
 import cs324.common.JobRequest;
-import cs324.common.JobResult;
 import cs324.common.JobType;
-import cs324.worker.WorkerService;
+import cs324.grpc.JobProgress;
+import cs324.grpc.WorkerStats;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -17,6 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -48,6 +50,9 @@ public class ClientGUI extends JFrame {
     private JTextArea activityArea;
     private JButton loadCSVButton;
     private JButton submitButton;
+    private JPanel progressList;
+    private final Map<String, JProgressBar> progressBars = new ConcurrentHashMap<>();
+    private final Map<String, JobProgress> latestProgress = new ConcurrentHashMap<>();
 
     private final ExecutorService clientPool = Executors.newCachedThreadPool();
 
@@ -115,7 +120,7 @@ public class ClientGUI extends JFrame {
         titles.add(subtitle);
         header.add(titles, BorderLayout.WEST);
 
-        JLabel badge = new JLabel("JAVA RMI CLIENT");
+        JLabel badge = new JLabel("gRPC CLIENT");
         badge.setOpaque(true);
         badge.setBackground(BUTTON);
         badge.setForeground(WHITE);
@@ -328,7 +333,19 @@ public class ClientGUI extends JFrame {
         );
 
         heading.add(clearButton, BorderLayout.EAST);
-        card.add(heading, BorderLayout.NORTH);
+        // Click any job's progress bar for actual per-worker completed tasks.
+        progressList = new JPanel();
+        progressList.setBackground(WHITE);
+        progressList.setLayout(new BoxLayout(progressList, BoxLayout.Y_AXIS));
+        JScrollPane progressScroll = new JScrollPane(progressList);
+        progressScroll.setPreferredSize(new Dimension(300, 110));
+        progressScroll.setBorder(BorderFactory.createLineBorder(BORDER));
+
+        JPanel activityTop = new JPanel(new BorderLayout(0, 9));
+        activityTop.setOpaque(false);
+        activityTop.add(heading, BorderLayout.NORTH);
+        activityTop.add(progressScroll, BorderLayout.CENTER);
+        card.add(activityTop, BorderLayout.NORTH);
 
         activityArea = new JTextArea();
         activityArea.setEditable(false);
@@ -366,7 +383,7 @@ public class ClientGUI extends JFrame {
         statusLabel.setForeground(new Color(116, 221, 176));
 
         JLabel networkLabel = new JLabel(
-                "DistriLab Network  |  Java RMI"
+                "DistriLab Network  |  gRPC"
         );
         networkLabel.setFont(
                 new Font("Segoe UI", Font.PLAIN, 12)
@@ -574,90 +591,94 @@ public class ClientGUI extends JFrame {
 
     private void submitJob() {
         final JobRequest job;
-
         try {
             job = buildJob();
-
         } catch (Exception e) {
             showError("Invalid input.\n" + e.getMessage());
             return;
         }
 
-        appendActivity(
-                "[SUBMITTED] "
-                        + job.getJobType()
-                        + " | "
-                        + shortJobId(job.getJobId())
-        );
-
-        updateStatus(
-                "PROCESSING",
-                new Color(255, 207, 105)
-        );
-
-        submitButton.setText("Processing...");
+        addProgressBar(job);
+        appendActivity("[SUBMITTED] " + job.getJobType() + " | " + shortJobId(job.getJobId()));
+        updateStatus("PROCESSING", new Color(255, 207, 105));
 
         clientPool.submit(() -> {
             try {
-                WorkerService coordinator =
-                        ClientConnection.findCoordinator();
-
-                JobResult result = coordinator.submitJob(job);
-
-                SwingUtilities.invokeLater(() -> {
-                    jobTypeResultLabel.setText(
-                            job.getJobType() + " RESULT"
-                    );
-
-                    resultArea.setForeground(NAVY);
-                    resultArea.setText(
-                            result.getResult().toString()
-                    );
-                    resultArea.setCaretPosition(0);
-
-                    coordinatorLabel.setText(
-                            "Coordinator: Worker "
-                                    + result.getCoordinatorId()
-                    );
-
-                    updateStatus(
-                            "COMPLETED",
-                            new Color(116, 221, 176)
-                    );
-
-                    submitButton.setText("Submit Job");
+                GrpcClientConnection.stream(job, update -> {
+                    latestProgress.put(job.getJobId(), update);
+                    SwingUtilities.invokeLater(() -> {
+                        JProgressBar bar = progressBars.get(job.getJobId());
+                        if (bar != null) bar.setValue(update.getPercent());
+                        coordinatorLabel.setText("Coordinator: Worker " + update.getCoordinatorId());
+                        if (update.getFinished()) {
+                            jobTypeResultLabel.setText(job.getJobType() + " RESULT");
+                            resultArea.setForeground(NAVY);
+                            resultArea.setText(update.getResult());
+                            resultArea.setCaretPosition(0);
+                            updateStatus("COMPLETED", new Color(116, 221, 176));
+                        }
+                    });
+                    if (update.getFinished()) {
+                        appendActivity("[COMPLETED] " + job.getJobType()
+                                + " → " + update.getResult()
+                                + " | Coordinator W" + update.getCoordinatorId());
+                    }
                 });
-
-                appendActivity(
-                        "[COMPLETED] "
-                                + job.getJobType()
-                                + " → "
-                                + result.getResult()
-                                + " | Coordinator W"
-                                + result.getCoordinatorId()
-                );
-
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {
                     resultArea.setText("ERROR");
                     resultArea.setForeground(ERROR);
-
-                    updateStatus(
-                            "FAILED",
-                            new Color(255, 133, 145)
-                    );
-
-                    submitButton.setText("Submit Job");
+                    updateStatus("FAILED", new Color(255, 133, 145));
                 });
-
-                appendActivity(
-                        "[FAILED] "
-                                + job.getJobType()
-                                + " → "
-                                + e.getMessage()
-                );
+                appendActivity("[FAILED] " + job.getJobType() + " → " + e.getMessage());
             }
         });
+    }
+
+    private void addProgressBar(JobRequest job) {
+        JProgressBar bar = new JProgressBar(0, 100);
+        bar.setStringPainted(true);
+        bar.setValue(0);
+        bar.setForeground(BUTTON);
+        bar.setBackground(new Color(235, 240, 247));
+        bar.setPreferredSize(new Dimension(300, 26));
+        bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+        bar.setToolTipText("Click to see worker-level breakdown");
+        bar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        bar.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                JobProgress update = latestProgress.get(job.getJobId());
+                StringBuilder details = new StringBuilder();
+                details.append(job.getJobType()).append(" | ").append(shortJobId(job.getJobId())).append("\n");
+                if (update == null) {
+                    details.append("Waiting for workers...");
+                } else {
+                    details.append(update.getCompleted()).append("/")
+                            .append(update.getTotal()).append(" tasks completed\n\n");
+                    for (WorkerStats stats : update.getWorkersList()) {
+                        details.append("Worker ").append(stats.getWorkerId())
+                                .append(": ").append(stats.getCompletedTasks())
+                                .append(" completed, ").append(stats.getAssignedTasks())
+                                .append(" assigned\n");
+                    }
+                }
+                JOptionPane.showMessageDialog(ClientGUI.this, details.toString(),
+                        "Worker Progress", JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+        progressBars.put(job.getJobId(), bar);
+        JPanel item = new JPanel(new BorderLayout(8, 0));
+        item.setOpaque(false);
+        item.setBorder(new EmptyBorder(5, 6, 5, 6));
+        JLabel title = new JLabel(job.getJobType() + " • " + shortJobId(job.getJobId()));
+        title.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        title.setForeground(TEXT);
+        item.add(title, BorderLayout.WEST);
+        item.add(bar, BorderLayout.CENTER);
+        progressList.add(item);
+        progressList.revalidate();
+        progressList.repaint();
     }
 
     // ==========================================
