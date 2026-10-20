@@ -78,4 +78,12 @@ service BootstrapService {
 
   rpc IsElectionReady(Empty)
       returns (ElectionStatus);
+
+  rpc Heartbeat(HeartbeatRequest)
+      returns (Empty);
+}
+
+// Used to detect crashed/disconnected workers.
+message HeartbeatRequest {
+  int32 workerId = 1;
 }

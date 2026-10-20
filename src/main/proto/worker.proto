@@ -1,0 +1,74 @@
+syntax = "proto3";
+package distrilab;
+option java_package = "cs324.grpc";
+option java_multiple_files = true;
+import "bootstrap.proto";
+
+// All numbers use decimal strings so values are not limited to int64.
+message JobSpec {
+  string job_id = 1;
+  string job_type = 2;
+  repeated string numbers = 3;
+  string start = 4;
+  string end = 5;
+}
+message TaskPart {
+  string job_id = 1;
+  int32 index = 2;
+  JobSpec calculation = 3;
+}
+message TaskOutcome {
+  string job_id = 1;
+  int32 index = 2;
+  string result = 3;
+  int32 worker_id = 4;
+}
+message JobPlan {
+  JobSpec job = 1;
+  repeated TaskPart tasks = 2;
+}
+message JobArchive {
+  JobPlan plan = 1;
+  repeated TaskOutcome completed = 2;
+}
+message ArchiveList {
+  repeated JobArchive jobs = 1;
+}
+message JobKey {
+  string job_id = 1;
+}
+message CandidateInfo {
+  int32 worker_id = 1;
+  int32 jac = 2;
+}
+message LeaderInfo {
+  int32 worker_id = 1;
+}
+message WorkerStats {
+  int32 worker_id = 1;
+  int32 completed_tasks = 2;
+  int32 assigned_tasks = 3;
+}
+message JobProgress {
+  string job_id = 1;
+  string job_type = 2;
+  int32 completed = 3;
+  int32 total = 4;
+  int32 percent = 5;
+  repeated WorkerStats workers = 6;
+  bool finished = 7;
+  string result = 8;
+  int32 coordinator_id = 9;
+}
+service WorkerCluster {
+  rpc Introduce(WorkerDetails) returns (Empty);
+  rpc GetCandidate(Empty) returns (CandidateInfo);
+  rpc RequestElection(Empty) returns (Empty);
+  rpc CurrentLeader(Empty) returns (LeaderInfo);
+  rpc RunTask(TaskPart) returns (TaskOutcome);
+  rpc SharePlan(JobPlan) returns (Empty);
+  rpc ShareResult(TaskOutcome) returns (Empty);
+  rpc GetArchives(Empty) returns (ArchiveList);
+  // Server streaming: progress is based only on completed tasks.
+  rpc SubmitJob(JobSpec) returns (stream JobProgress);
+}
