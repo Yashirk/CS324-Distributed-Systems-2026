@@ -1,8 +1,10 @@
+
 package cs324.job;
 
 import cs324.common.JobRequest;
 import cs324.common.JobType;
 
+import java.math.BigInteger;
 import java.util.List;
 
 public class JobCalculator {
@@ -11,7 +13,7 @@ public class JobCalculator {
         // Prevent creating JobCalculator objects
     }
 
-    public static long calculate(JobRequest job) {
+    public static BigInteger calculate(JobRequest job) {
 
         if (job == null) {
             throw new IllegalArgumentException("Job cannot be null.");
@@ -22,15 +24,15 @@ public class JobCalculator {
         switch (type) {
 
             case MAX:
-                return calculateMax(job.getNumbers());
+                return calculateMax(job.getBigNumbers());
 
             case PRIMECOUNT:
-                return calculatePrimeCount(job.getNumbers());
+                return calculatePrimeCount(job.getBigNumbers());
 
             case PRIMESUM:
                 return calculatePrimeSum(
-                        job.getStart(),
-                        job.getEnd()
+                        job.getBigStart(),
+                        job.getBigEnd()
                 );
 
             default:
@@ -45,8 +47,8 @@ public class JobCalculator {
     // MAX
     // ==========================================
 
-    private static long calculateMax(
-            List<Integer> numbers) {
+    private static BigInteger calculateMax(
+            List<BigInteger> numbers) {
 
         if (numbers == null || numbers.isEmpty()) {
             throw new IllegalArgumentException(
@@ -54,11 +56,11 @@ public class JobCalculator {
             );
         }
 
-        long maximum = numbers.get(0);
+        BigInteger maximum = numbers.get(0);
 
-        for (int number : numbers) {
+        for (BigInteger number : numbers) {
 
-            if (number > maximum) {
+            if (number.compareTo(maximum) > 0) {
                 maximum = number;
             }
         }
@@ -71,8 +73,8 @@ public class JobCalculator {
     // PRIMECOUNT
     // ==========================================
 
-    private static long calculatePrimeCount(
-            List<Integer> numbers) {
+    private static BigInteger calculatePrimeCount(
+            List<BigInteger> numbers) {
 
         if (numbers == null) {
             throw new IllegalArgumentException(
@@ -80,12 +82,12 @@ public class JobCalculator {
             );
         }
 
-        long count = 0;
+        BigInteger count = BigInteger.ZERO;
 
-        for (int number : numbers) {
+        for (BigInteger number : numbers) {
 
             if (isPrime(number)) {
-                count++;
+                count = count.add(BigInteger.ONE);
             }
         }
 
@@ -97,25 +99,27 @@ public class JobCalculator {
     // PRIMESUM
     // ==========================================
 
-    private static long calculatePrimeSum(
-            int start,
-            int end) {
+    private static BigInteger calculatePrimeSum(
+            BigInteger start,
+            BigInteger end) {
 
-        if (start > end) {
+        if (start.compareTo(end) > 0) {
             throw new IllegalArgumentException(
                     "Start cannot be greater than end."
             );
         }
 
-        long sum = 0;
+        BigInteger sum = BigInteger.ZERO;
 
-        for (int number = start;
-             number <= end;
-             number++) {
+        BigInteger number = start.max(BigInteger.TWO);
+
+        while (number.compareTo(end) <= 0) {
 
             if (isPrime(number)) {
-                sum += number;
+                sum = sum.add(number);
             }
+
+            number = number.add(BigInteger.ONE);
         }
 
         return sum;
@@ -126,30 +130,12 @@ public class JobCalculator {
     // PRIME CHECK
     // ==========================================
 
-    private static boolean isPrime(
-            int number) {
+    private static boolean isPrime(BigInteger number) {
 
-        if (number < 2) {
+        if (number.compareTo(BigInteger.TWO) < 0) {
             return false;
         }
 
-        if (number == 2) {
-            return true;
-        }
-
-        if (number % 2 == 0) {
-            return false;
-        }
-
-        for (int i = 3;
-             (long) i * i <= number;
-             i += 2) {
-
-            if (number % i == 0) {
-                return false;
-            }
-        }
-
-        return true;
+        return number.isProbablePrime(100);
     }
 }

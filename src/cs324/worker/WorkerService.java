@@ -1,3 +1,4 @@
+
 package cs324.worker;
 
 import cs324.common.ElectionCandidate;
@@ -5,6 +6,7 @@ import cs324.common.JobRequest;
 import cs324.common.JobResult;
 import cs324.common.WorkerInfo;
 
+import java.math.BigInteger;
 import java.rmi.Remote;
 import java.rmi.RemoteException;
 import java.util.List;
@@ -75,7 +77,7 @@ public interface WorkerService extends Remote {
             throws RemoteException;
 
 
-    long executePartialJob(
+    BigInteger executePartialJob(
             JobRequest partialJob)
             throws RemoteException;
 }

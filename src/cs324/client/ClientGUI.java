@@ -1,3 +1,4 @@
+
 package cs324.client;
 
 import cs324.common.JobRequest;
@@ -11,6 +12,9 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -19,1302 +23,514 @@ import java.util.stream.Collectors;
 
 public class ClientGUI extends JFrame {
 
-    // =====================================================
-    // COLOURS
-    // =====================================================
-
-    private static final Color BACKGROUND =
-            new Color(242, 245, 249);
-
-    private static final Color NAVY =
-            new Color(20, 35, 58);
-
-    private static final Color NAVY_LIGHT =
-            new Color(34, 52, 79);
-
-    private static final Color ACCENT =
-            new Color(0, 166, 153);
-
-    private static final Color ACCENT_DARK =
-            new Color(0, 130, 120);
-
-    private static final Color WHITE =
-            Color.WHITE;
-
-    private static final Color TEXT =
-            new Color(40, 48, 60);
-
-    private static final Color MUTED =
-            new Color(112, 122, 137);
-
-    private static final Color SUCCESS =
-            new Color(32, 145, 92);
-
-    private static final Color ERROR =
-            new Color(195, 55, 65);
-
-
-    // =====================================================
-    // GUI COMPONENTS
-    // =====================================================
+    private static final Color BACKGROUND = new Color(244, 247, 251);
+    private static final Color NAVY = new Color(22, 38, 62);
+    private static final Color NAVY_LIGHT = new Color(39, 60, 90);
+    private static final Color BUTTON = new Color(28, 107, 181);
+    private static final Color BUTTON_HOVER = new Color(22, 88, 154);
+    private static final Color WHITE = Color.WHITE;
+    private static final Color TEXT = new Color(41, 55, 73);
+    private static final Color MUTED = new Color(109, 123, 142);
+    private static final Color BORDER = new Color(219, 226, 236);
+    private static final Color SUCCESS = new Color(39, 153, 108);
+    private static final Color ERROR = new Color(194, 62, 70);
 
     private JComboBox<JobType> jobTypeBox;
-
     private JTextField numbersField;
     private JTextField startField;
     private JTextField endField;
-
     private JPanel inputCards;
     private CardLayout cardLayout;
-
-    private JLabel resultLabel;
+    private JTextArea resultArea;
     private JLabel coordinatorLabel;
     private JLabel statusLabel;
     private JLabel jobTypeResultLabel;
-
     private JTextArea activityArea;
-
     private JButton loadCSVButton;
     private JButton submitButton;
 
-
-    // =====================================================
-    // THREAD POOL
-    // =====================================================
-
-    /*
-     * Allows one GUI client to submit
-     * multiple tasks concurrently.
-     */
-    private final ExecutorService clientPool =
-            Executors.newCachedThreadPool();
-
-
-    // =====================================================
-    // CONSTRUCTOR
-    // =====================================================
+    private final ExecutorService clientPool = Executors.newCachedThreadPool();
 
     public ClientGUI() {
-
-        setTitle(
-                "DistriLab | Distributed Computing Client"
-        );
-
-        setSize(
-                920,
-                650
-        );
-
-        setMinimumSize(
-                new Dimension(
-                        850,
-                        600
-                )
-        );
-
+        setTitle("DistriLab | Distributed Computing Client");
+        setSize(980, 680);
+        setMinimumSize(new Dimension(890, 610));
         setLocationRelativeTo(null);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
-        setDefaultCloseOperation(
-                JFrame.EXIT_ON_CLOSE
-        );
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(BACKGROUND);
+        setContentPane(root);
+        root.add(createHeader(), BorderLayout.NORTH);
 
+        JPanel content = new JPanel(new BorderLayout(0, 18));
+        content.setOpaque(false);
+        content.setBorder(new EmptyBorder(22, 26, 22, 26));
 
-        /*
-         * Main background
-         */
-        JPanel root =
-                new JPanel(
-                        new BorderLayout()
-                );
+        JPanel topCards = new JPanel(new GridLayout(1, 2, 18, 0));
+        topCards.setOpaque(false);
+        topCards.add(createJobCard());
+        topCards.add(createResultCard());
 
-        root.setBackground(
-                BACKGROUND
-        );
+        content.add(topCards, BorderLayout.NORTH);
+        content.add(createActivityCard(), BorderLayout.CENTER);
 
-        setContentPane(
-                root
-        );
-
-
-        // HEADER
-        root.add(
-                createHeader(),
-                BorderLayout.NORTH
-        );
-
-
-        // MAIN CONTENT
-        JPanel content =
-                new JPanel(
-                        new BorderLayout(
-                                18,
-                                18
-                        )
-                );
-
-        content.setBackground(
-                BACKGROUND
-        );
-
-        content.setBorder(
-                new EmptyBorder(
-                        20,
-                        25,
-                        20,
-                        25
-                )
-        );
-
-
-        // TOP CARDS
-        JPanel topCards =
-                new JPanel(
-                        new GridLayout(
-                                1,
-                                2,
-                                18,
-                                0
-                        )
-                );
-
-        topCards.setOpaque(
-                false
-        );
-
-        topCards.add(
-                createJobCard()
-        );
-
-        topCards.add(
-                createResultCard()
-        );
-
-
-        content.add(
-                topCards,
-                BorderLayout.NORTH
-        );
-
-
-        // ACTIVITY LOG
-        content.add(
-                createActivityCard(),
-                BorderLayout.CENTER
-        );
-
-
-        root.add(
-                content,
-                BorderLayout.CENTER
-        );
-
-
-        // BOTTOM STATUS BAR
-        root.add(
-                createStatusBar(),
-                BorderLayout.SOUTH
-        );
-
-
+        root.add(content, BorderLayout.CENTER);
+        root.add(createStatusBar(), BorderLayout.SOUTH);
         updateInputPanel();
 
-
-        addWindowListener(
-                new WindowAdapter() {
-
-                    @Override
-                    public void windowClosing(
-                            WindowEvent e) {
-
-                        clientPool.shutdownNow();
-                    }
-                }
-        );
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                clientPool.shutdownNow();
+            }
+        });
     }
 
-
-    // =====================================================
+    // ==========================================
     // HEADER
-    // =====================================================
+    // ==========================================
 
     private JPanel createHeader() {
+        JPanel header = new GradientPanel();
+        header.setLayout(new BorderLayout());
+        header.setBorder(new EmptyBorder(20, 28, 20, 28));
 
-        JPanel header =
-                new GradientPanel();
+        JPanel titles = new JPanel();
+        titles.setOpaque(false);
+        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
 
-        header.setLayout(
-                new BorderLayout()
-        );
+        JLabel brand = new JLabel("DistriLab");
+        brand.setFont(new Font("Segoe UI", Font.BOLD, 27));
+        brand.setForeground(WHITE);
+        brand.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        header.setBorder(
-                new EmptyBorder(
-                        18,
-                        28,
-                        18,
-                        28
-                )
-        );
+        JLabel subtitle = new JLabel("Distributed Computing Client");
+        subtitle.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        subtitle.setForeground(new Color(199, 213, 231));
+        subtitle.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+        titles.add(brand);
+        titles.add(Box.createVerticalStrut(3));
+        titles.add(subtitle);
+        header.add(titles, BorderLayout.WEST);
 
-        // LEFT SIDE
-        JPanel titles =
-                new JPanel();
-
-        titles.setOpaque(
-                false
-        );
-
-        titles.setLayout(
-                new BoxLayout(
-                        titles,
-                        BoxLayout.Y_AXIS
-                )
-        );
-
-
-        JLabel brand =
-                new JLabel(
-                        "DistriLab"
-                );
-
-        brand.setForeground(
-                WHITE
-        );
-
-        brand.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        27
-                )
-        );
-
-
-        JLabel subtitle =
-                new JLabel(
-                        "Distributed Computing Client"
-                );
-
-        subtitle.setForeground(
-                new Color(
-                        195,
-                        210,
-                        225
-                )
-        );
-
-        subtitle.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        14
-                )
-        );
-
-
-        titles.add(
-                brand
-        );
-
-        titles.add(
-                Box.createVerticalStrut(
-                        3
-                )
-        );
-
-        titles.add(
-                subtitle
-        );
-
-
-        header.add(
-                titles,
-                BorderLayout.WEST
-        );
-
-
-        // RIGHT SIDE
-        JLabel systemBadge =
-                new JLabel(
-                        "  JAVA RMI CLIENT  "
-                );
-
-        systemBadge.setOpaque(
-                true
-        );
-
-        systemBadge.setBackground(
-                ACCENT
-        );
-
-        systemBadge.setForeground(
-                WHITE
-        );
-
-        systemBadge.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        12
-                )
-        );
-
-        systemBadge.setBorder(
-                new EmptyBorder(
-                        8,
-                        10,
-                        8,
-                        10
-                )
-        );
-
-
-        header.add(
-                systemBadge,
-                BorderLayout.EAST
-        );
-
+        JLabel badge = new JLabel("JAVA RMI CLIENT");
+        badge.setOpaque(true);
+        badge.setBackground(BUTTON);
+        badge.setForeground(WHITE);
+        badge.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        badge.setBorder(new EmptyBorder(9, 13, 9, 13));
+        header.add(badge, BorderLayout.EAST);
 
         return header;
     }
 
-
-    // =====================================================
-    // JOB CONFIGURATION CARD
-    // =====================================================
+    // ==========================================
+    // JOB CONFIGURATION
+    // ==========================================
 
     private JPanel createJobCard() {
+        JPanel card = createCard();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
 
-        JPanel card =
-                createCard();
+        card.add(sectionTitle("Job Configuration"));
+        card.add(Box.createVerticalStrut(4));
+        card.add(sectionSubtitle("Select a calculation and enter your data."));
+        card.add(Box.createVerticalStrut(19));
+        card.add(fieldLabel("JOB TYPE"));
+        card.add(Box.createVerticalStrut(7));
 
-
-        card.setLayout(
-                new BoxLayout(
-                        card,
-                        BoxLayout.Y_AXIS
-                )
-        );
-
-
-        JLabel heading =
-                sectionTitle(
-                        "Job Configuration"
-                );
-
-
-        JLabel help =
-                sectionSubtitle(
-                        "Select a computation and provide input data."
-                );
-
-
-        card.add(
-                heading
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        3
-                )
-        );
-
-        card.add(
-                help
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        18
-                )
-        );
-
-
-        // JOB TYPE LABEL
-        JLabel typeLabel =
-                fieldLabel(
-                        "JOB TYPE"
-                );
-
-        card.add(
-                typeLabel
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        6
-                )
-        );
-
-
-        jobTypeBox =
-                new JComboBox<>(
-                        JobType.values()
-                );
-
-        styleComboBox(
-                jobTypeBox
-        );
-
+        jobTypeBox = new JComboBox<>(JobType.values());
+        jobTypeBox.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        jobTypeBox.setBackground(WHITE);
+        jobTypeBox.setForeground(TEXT);
+        jobTypeBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         jobTypeBox.setMaximumSize(
-                new Dimension(
-                        Integer.MAX_VALUE,
-                        38
-                )
+                new Dimension(Integer.MAX_VALUE, 38)
         );
 
-        card.add(
-                jobTypeBox
-        );
+        card.add(jobTypeBox);
+        card.add(Box.createVerticalStrut(16));
 
-        card.add(
-                Box.createVerticalStrut(
-                        15
-                )
-        );
-
-
-        // INPUT CARDS
-        cardLayout =
-                new CardLayout();
-
-        inputCards =
-                new JPanel(
-                        cardLayout
-                );
-
-        inputCards.setOpaque(
-                false
-        );
-
+        cardLayout = new CardLayout();
+        inputCards = new JPanel(cardLayout);
+        inputCards.setOpaque(false);
+        inputCards.setAlignmentX(Component.LEFT_ALIGNMENT);
         inputCards.setMaximumSize(
-                new Dimension(
-                        Integer.MAX_VALUE,
-                        95
-                )
+                new Dimension(Integer.MAX_VALUE, 95)
         );
 
+        inputCards.add(createListInputPanel(), "LIST");
+        inputCards.add(createRangeInputPanel(), "RANGE");
 
-        inputCards.add(
-                createListInputPanel(),
-                "LIST"
+        card.add(inputCards);
+        card.add(Box.createVerticalStrut(15));
+
+        JPanel buttons = new JPanel(new GridLayout(1, 2, 10, 0));
+        buttons.setOpaque(false);
+        buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+        buttons.setMaximumSize(
+                new Dimension(Integer.MAX_VALUE, 42)
         );
 
-        inputCards.add(
-                createRangeInputPanel(),
-                "RANGE"
-        );
+        loadCSVButton = createButton("Load CSV");
+        submitButton = createButton("Submit Job");
 
+        buttons.add(loadCSVButton);
+        buttons.add(submitButton);
+        card.add(buttons);
 
-        card.add(
-                inputCards
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        16
-                )
-        );
-
-
-        // BUTTONS
-        JPanel buttons =
-                new JPanel(
-                        new GridLayout(
-                                1,
-                                2,
-                                10,
-                                0
-                        )
-                );
-
-        buttons.setOpaque(
-                false
-        );
-
-
-        loadCSVButton =
-                createSecondaryButton(
-                        "Load CSV"
-                );
-
-
-        submitButton =
-                createPrimaryButton(
-                        "Submit Job"
-                );
-
-
-        buttons.add(
-                loadCSVButton
-        );
-
-        buttons.add(
-                submitButton
-        );
-
-
-        card.add(
-                buttons
-        );
-
-
-        // EVENTS
-        jobTypeBox.addActionListener(
-                e ->
-                        updateInputPanel()
-        );
-
-
-        loadCSVButton.addActionListener(
-                e ->
-                        loadCSV()
-        );
-
-
-        submitButton.addActionListener(
-                e ->
-                        submitJob()
-        );
-
+        jobTypeBox.addActionListener(e -> updateInputPanel());
+        loadCSVButton.addActionListener(e -> loadCSV());
+        submitButton.addActionListener(e -> submitJob());
 
         return card;
     }
 
-
-    // =====================================================
-    // LIST INPUT
-    // =====================================================
+    // ==========================================
+    // NUMBER INPUT
+    // ==========================================
 
     private JPanel createListInputPanel() {
+        JPanel panel = new JPanel();
+        panel.setOpaque(false);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        JPanel panel =
-                new JPanel();
+        panel.add(fieldLabel("NUMBERS"));
+        panel.add(Box.createVerticalStrut(7));
 
-        panel.setOpaque(
-                false
-        );
-
-        panel.setLayout(
-                new BoxLayout(
-                        panel,
-                        BoxLayout.Y_AXIS
-                )
-        );
-
-
-        JLabel label =
-                fieldLabel(
-                        "NUMBERS"
-                );
-
-
-        numbersField =
-                createTextField();
-
+        numbersField = createTextField();
         numbersField.setToolTipText(
-                "Example: 12, 45, 7, 99, 23"
+                "Example: 12, 45, 1000000000000000000000000"
         );
 
-
-        panel.add(
-                label
-        );
-
-        panel.add(
-                Box.createVerticalStrut(
-                        6
-                )
-        );
-
-        panel.add(
-                numbersField
-        );
-
-
+        panel.add(numbersField);
         return panel;
     }
 
-
-    // =====================================================
-    // RANGE INPUT
-    // =====================================================
+    // ==========================================
+    // PRIME RANGE INPUT
+    // ==========================================
 
     private JPanel createRangeInputPanel() {
+        JPanel panel = new JPanel();
+        panel.setOpaque(false);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        JPanel panel =
-                new JPanel();
+        panel.add(fieldLabel("PRIME RANGE (START / END)"));
+        panel.add(Box.createVerticalStrut(7));
 
-        panel.setOpaque(
-                false
-        );
+        JPanel fields = new JPanel(new GridLayout(1, 2, 10, 0));
+        fields.setOpaque(false);
 
-        panel.setLayout(
-                new BoxLayout(
-                        panel,
-                        BoxLayout.Y_AXIS
-                )
-        );
+        startField = createTextField();
+        endField = createTextField();
 
+        startField.setToolTipText("Start of range");
+        endField.setToolTipText("End of range");
 
-        JLabel label =
-                fieldLabel(
-                        "PRIME RANGE"
-                );
-
-
-        panel.add(
-                label
-        );
-
-        panel.add(
-                Box.createVerticalStrut(
-                        6
-                )
-        );
-
-
-        JPanel fields =
-                new JPanel(
-                        new GridLayout(
-                                1,
-                                2,
-                                10,
-                                0
-                        )
-                );
-
-        fields.setOpaque(
-                false
-        );
-
-
-        startField =
-                createTextField();
-
-        startField.setToolTipText(
-                "Start of range"
-        );
-
-
-        endField =
-                createTextField();
-
-        endField.setToolTipText(
-                "End of range"
-        );
-
-
-        fields.add(
-                startField
-        );
-
-        fields.add(
-                endField
-        );
-
-
-        panel.add(
-                fields
-        );
-
+        fields.add(startField);
+        fields.add(endField);
+        panel.add(fields);
 
         return panel;
     }
 
-
-    // =====================================================
+    // ==========================================
     // RESULT CARD
-    // =====================================================
+    // ==========================================
 
     private JPanel createResultCard() {
+        JPanel card = createCard();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
 
-        JPanel card =
-                createCard();
+        card.add(sectionTitle("Latest Result"));
+        card.add(Box.createVerticalStrut(4));
+        card.add(sectionSubtitle(
+                "Output from the distributed worker network."
+        ));
+        card.add(Box.createVerticalStrut(24));
 
-
-        card.setLayout(
-                new BoxLayout(
-                        card,
-                        BoxLayout.Y_AXIS
-                )
-        );
-
-
-        JLabel title =
-                sectionTitle(
-                        "Latest Result"
-                );
-
-
-        JLabel subtitle =
-                sectionSubtitle(
-                        "Output from the distributed worker network."
-                );
-
-
-        card.add(
-                title
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        3
-                )
-        );
-
-        card.add(
-                subtitle
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        25
-                )
-        );
-
-
-        jobTypeResultLabel =
-                new JLabel(
-                        "NO JOB SUBMITTED"
-                );
-
-        jobTypeResultLabel.setForeground(
-                MUTED
-        );
-
+        jobTypeResultLabel = new JLabel("NO JOB SUBMITTED");
         jobTypeResultLabel.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        12
-                )
+                new Font("Segoe UI", Font.BOLD, 11)
+        );
+        jobTypeResultLabel.setForeground(MUTED);
+        jobTypeResultLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        card.add(jobTypeResultLabel);
+        card.add(Box.createVerticalStrut(12));
+
+        // Long results stay visible and can be copied.
+        resultArea = new JTextArea("—");
+        resultArea.setEditable(false);
+        resultArea.setLineWrap(true);
+        resultArea.setWrapStyleWord(false);
+        resultArea.setFont(
+                new Font("Segoe UI", Font.BOLD, 24)
+        );
+        resultArea.setForeground(NAVY);
+        resultArea.setBackground(new Color(247, 249, 252));
+        resultArea.setBorder(new EmptyBorder(12, 12, 12, 12));
+
+        JScrollPane resultScroll = new JScrollPane(resultArea);
+        resultScroll.setBorder(
+                BorderFactory.createLineBorder(BORDER)
+        );
+        resultScroll.setAlignmentX(Component.CENTER_ALIGNMENT);
+        resultScroll.setPreferredSize(new Dimension(360, 100));
+        resultScroll.setMaximumSize(
+                new Dimension(Integer.MAX_VALUE, 100)
         );
 
-        jobTypeResultLabel.setAlignmentX(
-                Component.CENTER_ALIGNMENT
-        );
+        card.add(resultScroll);
+        card.add(Box.createVerticalStrut(16));
 
-
-        resultLabel =
-                new JLabel(
-                        "—"
-                );
-
-        resultLabel.setForeground(
-                NAVY
-        );
-
-        resultLabel.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        46
-                )
-        );
-
-        resultLabel.setAlignmentX(
-                Component.CENTER_ALIGNMENT
-        );
-
-
-        coordinatorLabel =
-                new JLabel(
-                        "Coordinator: —"
-                );
-
-        coordinatorLabel.setForeground(
-                MUTED
-        );
-
+        coordinatorLabel = new JLabel("Coordinator: —");
         coordinatorLabel.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        14
-                )
+                new Font("Segoe UI", Font.PLAIN, 13)
         );
+        coordinatorLabel.setForeground(MUTED);
+        coordinatorLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        coordinatorLabel.setAlignmentX(
-                Component.CENTER_ALIGNMENT
-        );
-
-
-        card.add(
-                jobTypeResultLabel
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        8
-                )
-        );
-
-        card.add(
-                resultLabel
-        );
-
-        card.add(
-                Box.createVerticalStrut(
-                        12
-                )
-        );
-
-        card.add(
-                coordinatorLabel
-        );
-
-
+        card.add(coordinatorLabel);
         return card;
     }
 
-
-    // =====================================================
-    // ACTIVITY CARD
-    // =====================================================
+    // ==========================================
+    // ACTIVITY LOG
+    // ==========================================
 
     private JPanel createActivityCard() {
+        JPanel card = createCard();
+        card.setLayout(new BorderLayout(0, 12));
 
-        JPanel card =
-                createCard();
+        JPanel heading = new JPanel(new BorderLayout());
+        heading.setOpaque(false);
 
+        JPanel titles = new JPanel();
+        titles.setOpaque(false);
+        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
 
-        card.setLayout(
-                new BorderLayout(
-                        0,
-                        10
-                )
-        );
+        titles.add(sectionTitle("Task Activity"));
+        titles.add(Box.createVerticalStrut(3));
+        titles.add(sectionSubtitle(
+                "History of jobs submitted by this client."
+        ));
 
+        heading.add(titles, BorderLayout.WEST);
 
-        JPanel headingPanel =
-                new JPanel(
-                        new BorderLayout()
-                );
-
-        headingPanel.setOpaque(
-                false
-        );
-
-
-        JLabel heading =
-                sectionTitle(
-                        "Task Activity"
-                );
-
-
-        JLabel description =
-                sectionSubtitle(
-                        "Live history of jobs submitted by this client."
-                );
-
-
-        JPanel titleGroup =
-                new JPanel();
-
-        titleGroup.setOpaque(
-                false
-        );
-
-        titleGroup.setLayout(
-                new BoxLayout(
-                        titleGroup,
-                        BoxLayout.Y_AXIS
-                )
-        );
-
-
-        titleGroup.add(
-                heading
-        );
-
-        titleGroup.add(
-                description
-        );
-
-
-        headingPanel.add(
-                titleGroup,
-                BorderLayout.WEST
-        );
-
-
-        JButton clearButton =
-                new JButton(
-                        "Clear"
-                );
-
-        clearButton.setFocusPainted(
-                false
-        );
-
+        JButton clearButton = createButton("Clear");
+        clearButton.setPreferredSize(new Dimension(95, 36));
         clearButton.addActionListener(
-                e ->
-                        activityArea.setText("")
+                e -> activityArea.setText("")
         );
 
+        heading.add(clearButton, BorderLayout.EAST);
+        card.add(heading, BorderLayout.NORTH);
 
-        headingPanel.add(
-                clearButton,
-                BorderLayout.EAST
-        );
-
-
-        card.add(
-                headingPanel,
-                BorderLayout.NORTH
-        );
-
-
-        activityArea =
-                new JTextArea();
-
-        activityArea.setEditable(
-                false
-        );
-
+        activityArea = new JTextArea();
+        activityArea.setEditable(false);
         activityArea.setFont(
-                new Font(
-                        "Consolas",
-                        Font.PLAIN,
-                        13
-                )
+                new Font("Consolas", Font.PLAIN, 13)
         );
-
-        activityArea.setForeground(
-                TEXT
-        );
-
-        activityArea.setBackground(
-                new Color(
-                        248,
-                        250,
-                        252
-                )
-        );
-
+        activityArea.setForeground(TEXT);
+        activityArea.setBackground(new Color(247, 249, 252));
         activityArea.setBorder(
-                new EmptyBorder(
-                        12,
-                        12,
-                        12,
-                        12
-                )
+                new EmptyBorder(12, 12, 12, 12)
         );
 
-
-        JScrollPane scroll =
-                new JScrollPane(
-                        activityArea
-                );
-
+        JScrollPane scroll = new JScrollPane(activityArea);
         scroll.setBorder(
-                BorderFactory.createLineBorder(
-                        new Color(
-                                220,
-                                225,
-                                232
-                        )
-                )
+                BorderFactory.createLineBorder(BORDER)
         );
 
-
-        card.add(
-                scroll,
-                BorderLayout.CENTER
-        );
-
-
+        card.add(scroll, BorderLayout.CENTER);
         return card;
     }
 
-
-    // =====================================================
+    // ==========================================
     // STATUS BAR
-    // =====================================================
+    // ==========================================
 
     private JPanel createStatusBar() {
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setBackground(NAVY);
+        bar.setBorder(new EmptyBorder(11, 26, 11, 26));
 
-        JPanel bar =
-                new JPanel(
-                        new BorderLayout()
-                );
-
-        bar.setBackground(
-                NAVY
-        );
-
-        bar.setBorder(
-                new EmptyBorder(
-                        9,
-                        25,
-                        9,
-                        25
-                )
-        );
-
-
-        statusLabel =
-                new JLabel(
-                        "● READY"
-                );
-
-        statusLabel.setForeground(
-                new Color(
-                        111,
-                        224,
-                        178
-                )
-        );
-
+        statusLabel = new JLabel("● READY");
         statusLabel.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        12
-                )
+                new Font("Segoe UI", Font.BOLD, 12)
         );
+        statusLabel.setForeground(new Color(116, 221, 176));
 
-
-        JLabel networkLabel =
-                new JLabel(
-                        "DistriLab Network  |  Java RMI"
-                );
-
-        networkLabel.setForeground(
-                new Color(
-                        180,
-                        194,
-                        210
-                )
+        JLabel networkLabel = new JLabel(
+                "DistriLab Network  |  Java RMI"
         );
-
         networkLabel.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        12
-                )
+                new Font("Segoe UI", Font.PLAIN, 12)
         );
+        networkLabel.setForeground(new Color(189, 203, 220));
 
-
-        bar.add(
-                statusLabel,
-                BorderLayout.WEST
-        );
-
-        bar.add(
-                networkLabel,
-                BorderLayout.EAST
-        );
-
+        bar.add(statusLabel, BorderLayout.WEST);
+        bar.add(networkLabel, BorderLayout.EAST);
 
         return bar;
     }
 
-
-    // =====================================================
-    // INPUT TYPE SWITCHING
-    // =====================================================
+    // ==========================================
+    // SWITCH INPUT PANEL
+    // ==========================================
 
     private void updateInputPanel() {
+        JobType type = (JobType) jobTypeBox.getSelectedItem();
 
-        JobType type =
-                (JobType)
-                        jobTypeBox
-                                .getSelectedItem();
-
-
-        if (type
-                == JobType.PRIMESUM) {
-
-            cardLayout.show(
-                    inputCards,
-                    "RANGE"
-            );
-
-            loadCSVButton.setText(
-                    "Load Range CSV"
-            );
-
+        if (type == JobType.PRIMESUM) {
+            cardLayout.show(inputCards, "RANGE");
+            loadCSVButton.setText("Load Range CSV");
         } else {
-
-            cardLayout.show(
-                    inputCards,
-                    "LIST"
-            );
-
-            loadCSVButton.setText(
-                    "Load CSV"
-            );
+            cardLayout.show(inputCards, "LIST");
+            loadCSVButton.setText("Load CSV");
         }
     }
 
-
-    // =====================================================
-    // CSV LOADING
-    // =====================================================
+    // ==========================================
+    // LOAD CSV
+    // ==========================================
 
     private void loadCSV() {
+        JFileChooser chooser = new JFileChooser();
 
-        JFileChooser chooser =
-                new JFileChooser();
-
-
-        int choice =
-                chooser.showOpenDialog(
-                        this
-                );
-
-
-        if (choice
+        if (chooser.showOpenDialog(this)
                 != JFileChooser.APPROVE_OPTION) {
-
             return;
         }
 
-
         try {
+            File file = chooser.getSelectedFile();
+            List<BigInteger> numbers = readCSVNumbers(file);
 
-            File file =
-                    chooser.getSelectedFile();
+            JobType type = (JobType) jobTypeBox.getSelectedItem();
 
-
-            List<Integer> numbers =
-                    CSVLoader.loadNumbers(
-                            file
-                    );
-
-
-            JobType type =
-                    (JobType)
-                            jobTypeBox
-                                    .getSelectedItem();
-
-
-            if (type
-                    == JobType.PRIMESUM) {
-
+            if (type == JobType.PRIMESUM) {
                 if (numbers.size() < 2) {
-
-                    throw new Exception(
+                    throw new IllegalArgumentException(
                             "PRIMESUM CSV requires a start and end value."
                     );
                 }
 
-
-                startField.setText(
-                        String.valueOf(
-                                numbers.get(0)
-                        )
-                );
-
-
-                endField.setText(
-                        String.valueOf(
-                                numbers.get(1)
-                        )
-                );
-
+                startField.setText(numbers.get(0).toString());
+                endField.setText(numbers.get(1).toString());
 
             } else {
-
-                String text =
-                        numbers.stream()
-                                .map(
-                                        String::valueOf
-                                )
-                                .collect(
-                                        Collectors.joining(
-                                                ", "
-                                        )
-                                );
-
-
                 numbersField.setText(
-                        text
+                        numbers.stream()
+                                .map(BigInteger::toString)
+                                .collect(Collectors.joining(", "))
                 );
             }
 
-
             updateStatus(
                     "CSV LOADED",
-                    ACCENT
+                    new Color(116, 221, 176)
             );
 
-
-            appendActivity(
-                    "[CSV] Loaded: "
-                            + file.getName()
-            );
-
+            appendActivity("[CSV] Loaded: " + file.getName());
 
         } catch (Exception e) {
-
-            showError(
-                    e.getMessage()
-            );
+            showError(e.getMessage());
         }
     }
 
-
-    // =====================================================
-    // BUILD JOB
-    // =====================================================
-
-    private JobRequest buildJob()
+    private List<BigInteger> readCSVNumbers(File file)
             throws Exception {
 
-        JobType type =
-                (JobType)
-                        jobTypeBox
-                                .getSelectedItem();
+        List<BigInteger> numbers = new ArrayList<>();
+        boolean firstRow = true;
 
+        for (String rawLine : Files.readAllLines(
+                file.toPath(),
+                StandardCharsets.UTF_8)) {
 
-        if (type
-                == JobType.PRIMESUM) {
+            String line = rawLine.replace("\uFEFF", "").trim();
 
-            String startText =
-                    startField
-                            .getText()
-                            .trim();
+            if (line.isEmpty()) {
+                continue;
+            }
 
+            String[] pieces = line.split("[,;\\s]+");
 
-            String endText =
-                    endField
-                            .getText()
-                            .trim();
+            if (firstRow && isHeaderRow(pieces)) {
+                firstRow = false;
+                continue;
+            }
 
+            firstRow = false;
 
-            if (startText.isEmpty()
-                    ||
-                    endText.isEmpty()) {
+            for (String piece : pieces) {
+                String value = piece.replace("\"", "").trim();
 
-                throw new Exception(
+                if (!value.isEmpty()) {
+                    try {
+                        numbers.add(new BigInteger(value));
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException(
+                                "Invalid number in CSV: " + piece
+                        );
+                    }
+                }
+            }
+        }
+
+        if (numbers.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "CSV file contains no numbers."
+            );
+        }
+
+        return numbers;
+    }
+
+    private boolean isHeaderRow(String[] pieces) {
+        for (String piece : pieces) {
+            String word = piece.replace("\"", "").trim();
+
+            if (!word.matches(
+                    "(?i)start|end|number|numbers|value|values|integer|integers"
+            )) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // ==========================================
+    // BUILD JOB
+    // ==========================================
+
+    private JobRequest buildJob() {
+        JobType type = (JobType) jobTypeBox.getSelectedItem();
+
+        if (type == JobType.PRIMESUM) {
+            String startText = startField.getText().trim();
+            String endText = endField.getText().trim();
+
+            if (startText.isEmpty() || endText.isEmpty()) {
+                throw new IllegalArgumentException(
                         "Please enter both start and end values."
                 );
             }
 
+            BigInteger start = parseInteger(startText);
+            BigInteger end = parseInteger(endText);
 
-            int start =
-                    Integer.parseInt(
-                            startText
-                    );
-
-
-            int end =
-                    Integer.parseInt(
-                            endText
-                    );
-
-
-            if (start > end) {
-
-                throw new Exception(
+            if (start.compareTo(end) > 0) {
+                throw new IllegalArgumentException(
                         "Start value cannot be greater than end value."
                 );
             }
-
 
             return new JobRequest(
                     JobType.PRIMESUM,
@@ -1323,272 +539,149 @@ public class ClientGUI extends JFrame {
             );
         }
 
-
-        String input =
-                numbersField
-                        .getText()
-                        .trim();
-
+        String input = numbersField.getText().trim();
 
         if (input.isEmpty()) {
-
-            throw new Exception(
+            throw new IllegalArgumentException(
                     "Please enter at least one number."
             );
         }
 
+        List<BigInteger> numbers = new ArrayList<>();
 
-        String[] pieces =
-                input.split(
-                        "[,\\s]+"
-                );
-
-
-        List<Integer> numbers =
-                new ArrayList<>();
-
-
-        for (String piece : pieces) {
-
-            if (!piece.isBlank()) {
-
-                numbers.add(
-                        Integer.parseInt(
-                                piece
-                        )
-                );
+        for (String piece : input.split("[,\\s]+")) {
+            if (!piece.isEmpty()) {
+                numbers.add(parseInteger(piece));
             }
         }
 
-
-        if (numbers.isEmpty()) {
-
-            throw new Exception(
-                    "No valid numbers were entered."
-            );
-        }
-
-
-        return new JobRequest(
-                type,
-                numbers
-        );
+        return new JobRequest(type, numbers);
     }
 
+    private BigInteger parseInteger(String text) {
+        try {
+            return new BigInteger(text);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Invalid integer: " + text
+            );
+        }
+    }
 
-    // =====================================================
+    // ==========================================
     // SUBMIT JOB
-    // =====================================================
+    // ==========================================
 
     private void submitJob() {
-
         final JobRequest job;
 
-
         try {
-
-            job =
-                    buildJob();
-
+            job = buildJob();
 
         } catch (Exception e) {
-
-            showError(
-                    "Invalid input.\n"
-                            + e.getMessage()
-            );
-
+            showError("Invalid input.\n" + e.getMessage());
             return;
         }
-
 
         appendActivity(
                 "[SUBMITTED] "
                         + job.getJobType()
                         + " | "
-                        + shortJobId(
-                        job.getJobId()
-                )
+                        + shortJobId(job.getJobId())
         );
-
 
         updateStatus(
                 "PROCESSING",
-                new Color(
-                        235,
-                        175,
-                        55
-                )
+                new Color(255, 207, 105)
         );
 
+        submitButton.setText("Processing...");
 
-        submitButton.setText(
-                "Processing..."
-        );
+        clientPool.submit(() -> {
+            try {
+                WorkerService coordinator =
+                        ClientConnection.findCoordinator();
 
+                JobResult result = coordinator.submitJob(job);
 
-        /*
-         * Job runs outside Swing's UI thread.
-         *
-         * Multiple clicks can therefore create
-         * multiple concurrent client tasks.
-         */
-        clientPool.submit(
-                () -> {
+                SwingUtilities.invokeLater(() -> {
+                    jobTypeResultLabel.setText(
+                            job.getJobType() + " RESULT"
+                    );
 
-                    try {
+                    resultArea.setForeground(NAVY);
+                    resultArea.setText(
+                            result.getResult().toString()
+                    );
+                    resultArea.setCaretPosition(0);
 
-                        WorkerService coordinator =
-                                ClientConnection
-                                        .findCoordinator();
+                    coordinatorLabel.setText(
+                            "Coordinator: Worker "
+                                    + result.getCoordinatorId()
+                    );
 
+                    updateStatus(
+                            "COMPLETED",
+                            new Color(116, 221, 176)
+                    );
 
-                        JobResult result =
-                                coordinator.submitJob(
-                                        job
-                                );
+                    submitButton.setText("Submit Job");
+                });
 
+                appendActivity(
+                        "[COMPLETED] "
+                                + job.getJobType()
+                                + " → "
+                                + result.getResult()
+                                + " | Coordinator W"
+                                + result.getCoordinatorId()
+                );
 
-                        SwingUtilities.invokeLater(
-                                () -> {
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    resultArea.setText("ERROR");
+                    resultArea.setForeground(ERROR);
 
-                                    jobTypeResultLabel.setText(
-                                            job.getJobType()
-                                                    .toString()
-                                                    + " RESULT"
-                                    );
+                    updateStatus(
+                            "FAILED",
+                            new Color(255, 133, 145)
+                    );
 
+                    submitButton.setText("Submit Job");
+                });
 
-                                    resultLabel.setText(
-                                            String.valueOf(
-                                                    result.getResult()
-                                            )
-                                    );
-
-
-                                    coordinatorLabel.setText(
-                                            "Coordinator: Worker "
-                                                    + result.getCoordinatorId()
-                                    );
-
-
-                                    updateStatus(
-                                            "COMPLETED",
-                                            SUCCESS
-                                    );
-
-
-                                    submitButton.setText(
-                                            "Submit Job"
-                                    );
-                                }
-                        );
-
-
-                        appendActivity(
-                                "[COMPLETED] "
-                                        + job.getJobType()
-                                        + " → "
-                                        + result.getResult()
-                                        + " | Coordinator W"
-                                        + result.getCoordinatorId()
-                        );
-
-
-                    } catch (Exception e) {
-
-                        SwingUtilities.invokeLater(
-                                () -> {
-
-                                    resultLabel.setText(
-                                            "ERROR"
-                                    );
-
-                                    resultLabel.setForeground(
-                                            ERROR
-                                    );
-
-
-                                    updateStatus(
-                                            "FAILED",
-                                            ERROR
-                                    );
-
-
-                                    submitButton.setText(
-                                            "Submit Job"
-                                    );
-                                }
-                        );
-
-
-                        appendActivity(
-                                "[FAILED] "
-                                        + job.getJobType()
-                                        + " → "
-                                        + e.getMessage()
-                        );
-                    }
-                }
-        );
+                appendActivity(
+                        "[FAILED] "
+                                + job.getJobType()
+                                + " → "
+                                + e.getMessage()
+                );
+            }
+        });
     }
 
+    // ==========================================
+    // ACTIVITY AND STATUS
+    // ==========================================
 
-    // =====================================================
-    // ACTIVITY
-    // =====================================================
+    private void appendActivity(String text) {
+        SwingUtilities.invokeLater(() -> {
+            activityArea.append(text + "\n");
 
-    private void appendActivity(
-            String text) {
-
-        SwingUtilities.invokeLater(
-                () -> {
-
-                    activityArea.append(
-                            text + "\n"
-                    );
-
-
-                    activityArea.setCaretPosition(
-                            activityArea
-                                    .getDocument()
-                                    .getLength()
-                    );
-                }
-        );
+            activityArea.setCaretPosition(
+                    activityArea.getDocument().getLength()
+            );
+        });
     }
 
-
-    // =====================================================
-    // STATUS
-    // =====================================================
-
-    private void updateStatus(
-            String text,
-            Color colour) {
-
-        SwingUtilities.invokeLater(
-                () -> {
-
-                    statusLabel.setText(
-                            "● " + text
-                    );
-
-                    statusLabel.setForeground(
-                            colour
-                    );
-                }
-        );
+    private void updateStatus(String text, Color colour) {
+        SwingUtilities.invokeLater(() -> {
+            statusLabel.setText("● " + text);
+            statusLabel.setForeground(colour);
+        });
     }
 
-
-    // =====================================================
-    // ERROR
-    // =====================================================
-
-    private void showError(
-            String message) {
-
+    private void showError(String message) {
         JOptionPane.showMessageDialog(
                 this,
                 message,
@@ -1597,325 +690,141 @@ public class ClientGUI extends JFrame {
         );
     }
 
-
-    // =====================================================
-    // HELPERS
-    // =====================================================
-
-    private String shortJobId(
-            String jobId) {
-
-        if (jobId == null
-                ||
-                jobId.length() <= 8) {
-
-            return jobId;
-        }
-
-        return jobId.substring(
-                0,
-                8
-        );
+    private String shortJobId(String jobId) {
+        return jobId == null || jobId.length() <= 8
+                ? jobId : jobId.substring(0, 8);
     }
 
+    // ==========================================
+    // UI STYLING
+    // ==========================================
 
     private JPanel createCard() {
-
-        JPanel panel =
-                new JPanel();
-
-        panel.setBackground(
-                WHITE
-        );
+        JPanel panel = new JPanel();
+        panel.setBackground(WHITE);
 
         panel.setBorder(
                 BorderFactory.createCompoundBorder(
-
-                        BorderFactory.createLineBorder(
-                                new Color(
-                                        224,
-                                        229,
-                                        236
-                                )
-                        ),
-
-                        new EmptyBorder(
-                                20,
-                                20,
-                                20,
-                                20
-                        )
+                        BorderFactory.createLineBorder(BORDER),
+                        new EmptyBorder(20, 21, 20, 21)
                 )
         );
 
         return panel;
     }
 
-
-    private JLabel sectionTitle(
-            String text) {
-
-        JLabel label =
-                new JLabel(
-                        text
-                );
-
-        label.setForeground(
-                NAVY
-        );
-
+    private JLabel sectionTitle(String text) {
+        JLabel label = new JLabel(text);
         label.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        18
-                )
+                new Font("Segoe UI", Font.BOLD, 18)
         );
-
+        label.setForeground(NAVY);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
         return label;
     }
 
-
-    private JLabel sectionSubtitle(
-            String text) {
-
-        JLabel label =
-                new JLabel(
-                        text
-                );
-
-        label.setForeground(
-                MUTED
-        );
-
+    private JLabel sectionSubtitle(String text) {
+        JLabel label = new JLabel(text);
         label.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        12
-                )
+                new Font("Segoe UI", Font.PLAIN, 12)
         );
-
+        label.setForeground(MUTED);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
         return label;
     }
 
-
-    private JLabel fieldLabel(
-            String text) {
-
-        JLabel label =
-                new JLabel(
-                        text
-                );
-
-        label.setForeground(
-                MUTED
-        );
-
+    private JLabel fieldLabel(String text) {
+        JLabel label = new JLabel(text);
         label.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        11
-                )
+                new Font("Segoe UI", Font.BOLD, 11)
         );
-
+        label.setForeground(MUTED);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
         return label;
     }
-
 
     private JTextField createTextField() {
-
-        JTextField field =
-                new JTextField();
+        JTextField field = new JTextField();
 
         field.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        14
-                )
+                new Font("Segoe UI", Font.PLAIN, 14)
         );
-
-        field.setForeground(
-                TEXT
-        );
-
-        field.setBackground(
-                new Color(
-                        248,
-                        250,
-                        252
-                )
-        );
+        field.setForeground(TEXT);
+        field.setBackground(new Color(248, 250, 253));
 
         field.setBorder(
                 BorderFactory.createCompoundBorder(
-
-                        BorderFactory.createLineBorder(
-                                new Color(
-                                        210,
-                                        217,
-                                        226
-                                )
-                        ),
-
-                        new EmptyBorder(
-                                9,
-                                10,
-                                9,
-                                10
-                        )
+                        BorderFactory.createLineBorder(BORDER),
+                        new EmptyBorder(9, 11, 9, 11)
                 )
         );
 
+        field.setAlignmentX(Component.LEFT_ALIGNMENT);
         field.setMaximumSize(
-                new Dimension(
-                        Integer.MAX_VALUE,
-                        40
-                )
+                new Dimension(Integer.MAX_VALUE, 40)
         );
 
         return field;
     }
 
+    // All buttons use the same blue colour and hover style.
+    private JButton createButton(String text) {
+        JButton button = new JButton(text) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
 
-    private void styleComboBox(
-            JComboBox<?> comboBox) {
-
-        comboBox.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.PLAIN,
-                        14
-                )
-        );
-
-        comboBox.setBackground(
-                WHITE
-        );
-
-        comboBox.setForeground(
-                TEXT
-        );
-    }
-
-
-    private JButton createPrimaryButton(
-            String text) {
-
-        JButton button =
-                new JButton(
-                        text
+                g2.setRenderingHint(
+                        RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON
                 );
 
+                g2.setColor(
+                        getModel().isRollover()
+                                ? BUTTON_HOVER
+                                : BUTTON
+                );
+
+                g2.fillRoundRect(
+                        0,
+                        0,
+                        getWidth(),
+                        getHeight(),
+                        10,
+                        10
+                );
+
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+
         button.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        13
-                )
+                new Font("Segoe UI", Font.BOLD, 13)
         );
-
-        button.setForeground(
-                WHITE
-        );
-
-        button.setBackground(
-                ACCENT
-        );
-
-        button.setFocusPainted(
-                false
-        );
-
-        button.setBorder(
-                new EmptyBorder(
-                        11,
-                        15,
-                        11,
-                        15
-                )
-        );
-
+        button.setForeground(WHITE);
+        button.setFocusPainted(false);
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setOpaque(false);
+        button.setRolloverEnabled(true);
         button.setCursor(
-                Cursor.getPredefinedCursor(
-                        Cursor.HAND_CURSOR
-                )
+                Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         );
 
         return button;
     }
 
-
-    private JButton createSecondaryButton(
-            String text) {
-
-        JButton button =
-                new JButton(
-                        text
-                );
-
-        button.setFont(
-                new Font(
-                        "Segoe UI",
-                        Font.BOLD,
-                        13
-                )
-        );
-
-        button.setForeground(
-                NAVY
-        );
-
-        button.setBackground(
-                new Color(
-                        232,
-                        237,
-                        243
-                )
-        );
-
-        button.setFocusPainted(
-                false
-        );
-
-        button.setBorder(
-                new EmptyBorder(
-                        11,
-                        15,
-                        11,
-                        15
-                )
-        );
-
-        button.setCursor(
-                Cursor.getPredefinedCursor(
-                        Cursor.HAND_CURSOR
-                )
-        );
-
-        return button;
-    }
-
-
-    // =====================================================
+    // ==========================================
     // GRADIENT HEADER
-    // =====================================================
+    // ==========================================
 
-    private static class GradientPanel
-            extends JPanel {
-
+    private static class GradientPanel extends JPanel {
         @Override
-        protected void paintComponent(
-                Graphics g) {
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
 
-            Graphics2D g2 =
-                    (Graphics2D)
-                            g.create();
-
-
-            GradientPaint gradient =
+            g2.setPaint(
                     new GradientPaint(
                             0,
                             0,
@@ -1923,13 +832,8 @@ public class ClientGUI extends JFrame {
                             getWidth(),
                             0,
                             NAVY_LIGHT
-                    );
-
-
-            g2.setPaint(
-                    gradient
+                    )
             );
-
 
             g2.fillRect(
                     0,
@@ -1938,55 +842,31 @@ public class ClientGUI extends JFrame {
                     getHeight()
             );
 
-
             g2.dispose();
-
-
-            super.paintComponent(
-                    g
-            );
+            super.paintComponent(g);
         }
-
 
         @Override
         public boolean isOpaque() {
-
             return false;
         }
     }
 
-
-    // =====================================================
+    // ==========================================
     // MAIN
-    // =====================================================
+    // ==========================================
 
-    public static void main(
-            String[] args) {
-
-
+    public static void main(String[] args) {
         try {
-
             UIManager.setLookAndFeel(
-                    UIManager
-                            .getSystemLookAndFeelClassName()
+                    UIManager.getSystemLookAndFeelClassName()
             );
-
         } catch (Exception ignored) {
-
         }
 
-
-        SwingUtilities.invokeLater(
-                () -> {
-
-                    ClientGUI gui =
-                            new ClientGUI();
-
-
-                    gui.setVisible(
-                            true
-                    );
-                }
-        );
+        SwingUtilities.invokeLater(() -> {
+            ClientGUI gui = new ClientGUI();
+            gui.setVisible(true);
+        });
     }
 }

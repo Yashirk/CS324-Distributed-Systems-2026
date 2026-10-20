@@ -1,146 +1,83 @@
+
 package cs324.worker;
+
+import cs324.bootstrap.BootstrapService;
+import cs324.common.WorkerInfo;
 
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
+import java.util.List;
 
 public class ElectionTest {
 
     public static void main(String[] args) {
 
         try {
+            Registry registry =
+                    LocateRegistry.getRegistry("localhost", 1099);
 
-            System.out.println(
-                    "======================================"
-            );
+            BootstrapService bootstrap =
+                    (BootstrapService) registry.lookup("BootstrapService");
 
-            System.out.println(
-                    "CS324 LEADER ELECTION TEST"
-            );
-
-            System.out.println(
-                    "======================================"
-            );
-
-
-            // Connect to Worker 1
-            Registry registry1 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2001
-                    );
-
-            WorkerService worker1 =
-                    (WorkerService)
-                            registry1.lookup(
-                                    "Worker1"
-                            );
-
-
-            System.out.println(
-                    "Connected to Worker 1."
-            );
-
-            System.out.println(
-                    "Starting leader election..."
-            );
-
-
-            // Tell Worker 1 to start an election
-            worker1.startElection();
-
-
-            // Connect to Worker 2
-            Registry registry2 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2002
-                    );
-
-            WorkerService worker2 =
-                    (WorkerService)
-                            registry2.lookup(
-                                    "Worker2"
-                            );
-
-
-            // Connect to Worker 3
-            Registry registry3 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2003
-                    );
-
-            WorkerService worker3 =
-                    (WorkerService)
-                            registry3.lookup(
-                                    "Worker3"
-                            );
-
-
-            System.out.println();
-            System.out.println(
-                    "======================================"
-            );
-
-            System.out.println(
-                    "ELECTION RESULT"
-            );
-
-            System.out.println(
-                    "======================================"
-            );
-
-            System.out.println(
-                    "Worker 1 says Coordinator = Worker "
-                            + worker1.getCoordinatorId()
-            );
-
-            System.out.println(
-                    "Worker 2 says Coordinator = Worker "
-                            + worker2.getCoordinatorId()
-            );
-
-            System.out.println(
-                    "Worker 3 says Coordinator = Worker "
-                            + worker3.getCoordinatorId()
-            );
-
-            System.out.println(
-                    "======================================"
-            );
-
-
-            if (
-                    worker1.getCoordinatorId() == 3
-                            &&
-                            worker2.getCoordinatorId() == 3
-                            &&
-                            worker3.getCoordinatorId() == 3
-            ) {
-
-                System.out.println(
-                        "LEADER ELECTION TEST PASSED."
-                );
-
-                System.out.println(
-                        "Worker 3 correctly elected because all JACs are 0 and Worker 3 has the highest ID."
-                );
-
-            } else {
-
-                System.out.println(
-                        "LEADER ELECTION TEST FAILED."
-                );
+            if (!bootstrap.isElectionReady()) {
+                System.out.println("Waiting for all workers to connect.");
+                return;
             }
 
+            List<WorkerInfo> workers = bootstrap.getActiveWorkers();
 
-        } catch (Exception e) {
+            if (workers.isEmpty()) {
+                System.out.println("No workers available.");
+                return;
+            }
 
-            System.err.println(
-                    "Election test failed."
+            WorkerInfo firstWorker = workers.get(0);
+
+            Registry workerRegistry = LocateRegistry.getRegistry(
+                    firstWorker.getHost(),
+                    firstWorker.getRegistryPort()
             );
 
-            e.printStackTrace();
+            WorkerService worker = (WorkerService)
+                    workerRegistry.lookup(firstWorker.getServiceName());
+
+            int coordinator = worker.getCoordinatorId();
+
+            if (coordinator == -1) {
+                worker.startElection();
+                coordinator = worker.getCoordinatorId();
+            }
+
+            for (WorkerInfo info : workers) {
+
+                Registry remoteRegistry = LocateRegistry.getRegistry(
+                        info.getHost(),
+                        info.getRegistryPort()
+                );
+
+                WorkerService remoteWorker = (WorkerService)
+                        remoteRegistry.lookup(info.getServiceName());
+
+                if (remoteWorker.getCoordinatorId() != coordinator) {
+                    System.out.println(
+                            "Coordinator election not completed."
+                    );
+                    return;
+                }
+            }
+
+            if (coordinator != -1) {
+                System.out.println(
+                        "ELECTED COORDINATOR: Worker " + coordinator
+                );
+            } else {
+                System.out.println("Coordinator election not completed.");
+            }
+
+        } catch (Exception e) {
+            System.out.println(
+                    "Election test failed: " + e.getMessage()
+            );
         }
     }
 }

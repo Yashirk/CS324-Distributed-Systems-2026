@@ -1,8 +1,10 @@
+
 package cs324.job;
 
 import cs324.common.JobRequest;
 import cs324.common.JobType;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,11 +31,16 @@ public class JobDistributor {
         return splitNumberList(job, workerCount);
     }
 
+
+    // ==========================================
+    // SPLIT NUMBER LIST
+    // ==========================================
+
     private static List<JobRequest> splitNumberList(
             JobRequest job,
             int workerCount) {
 
-        List<Integer> numbers = job.getNumbers();
+        List<BigInteger> numbers = job.getBigNumbers();
 
         if (numbers.isEmpty()) {
             throw new IllegalArgumentException(
@@ -46,30 +53,20 @@ public class JobDistributor {
                 numbers.size()
         );
 
-        List<JobRequest> jobs =
-                new ArrayList<>();
+        List<JobRequest> jobs = new ArrayList<>();
 
-        int baseSize =
-                numbers.size() / parts;
-
-        int remainder =
-                numbers.size() % parts;
+        int baseSize = numbers.size() / parts;
+        int remainder = numbers.size() % parts;
 
         int index = 0;
 
         for (int i = 0; i < parts; i++) {
 
-            int size =
-                    baseSize
-                            + (i < remainder ? 1 : 0);
+            int size = baseSize + (i < remainder ? 1 : 0);
 
-            List<Integer> chunk =
-                    new ArrayList<>(
-                            numbers.subList(
-                                    index,
-                                    index + size
-                            )
-                    );
+            List<BigInteger> chunk = new ArrayList<>(
+                    numbers.subList(index, index + size)
+            );
 
             jobs.add(
                     new JobRequest(
@@ -84,47 +81,53 @@ public class JobDistributor {
         return jobs;
     }
 
+
+    // ==========================================
+    // SPLIT PRIME SUM
+    // ==========================================
+
     private static List<JobRequest> splitPrimeSum(
             JobRequest job,
             int workerCount) {
 
-        int start = job.getStart();
-        int end = job.getEnd();
+        BigInteger start = job.getBigStart();
+        BigInteger end = job.getBigEnd();
 
-        if (start > end) {
+        if (start.compareTo(end) > 0) {
             throw new IllegalArgumentException(
                     "Start cannot be greater than end."
             );
         }
 
-        int totalNumbers =
-                end - start + 1;
+        BigInteger totalNumbers = end.subtract(start)
+                .add(BigInteger.ONE);
 
-        int parts =
-                Math.min(
-                        workerCount,
-                        totalNumbers
-                );
+        int parts = totalNumbers.min(
+                BigInteger.valueOf(workerCount)
+        ).intValueExact();
 
-        int baseSize =
-                totalNumbers / parts;
+        BigInteger[] division = totalNumbers.divideAndRemainder(
+                BigInteger.valueOf(parts)
+        );
 
-        int remainder =
-                totalNumbers % parts;
+        BigInteger baseSize = division[0];
+        int remainder = division[1].intValueExact();
 
-        List<JobRequest> jobs =
-                new ArrayList<>();
+        List<JobRequest> jobs = new ArrayList<>();
 
-        int currentStart = start;
+        BigInteger currentStart = start;
 
         for (int i = 0; i < parts; i++) {
 
-            int size =
-                    baseSize
-                            + (i < remainder ? 1 : 0);
+            BigInteger size = baseSize;
 
-            int currentEnd =
-                    currentStart + size - 1;
+            if (i < remainder) {
+                size = size.add(BigInteger.ONE);
+            }
+
+            BigInteger currentEnd = currentStart
+                    .add(size)
+                    .subtract(BigInteger.ONE);
 
             jobs.add(
                     new JobRequest(
@@ -134,18 +137,22 @@ public class JobDistributor {
                     )
             );
 
-            currentStart =
-                    currentEnd + 1;
+            currentStart = currentEnd.add(BigInteger.ONE);
         }
 
         return jobs;
     }
 
-    public static long combineResults(
-            JobType type,
-            List<Long> results) {
 
-        if (results.isEmpty()) {
+    // ==========================================
+    // COMBINE RESULTS
+    // ==========================================
+
+    public static BigInteger combineResults(
+            JobType type,
+            List<BigInteger> results) {
+
+        if (results == null || results.isEmpty()) {
             throw new IllegalArgumentException(
                     "No worker results received."
             );
@@ -153,24 +160,22 @@ public class JobDistributor {
 
         if (type == JobType.MAX) {
 
-            long maximum =
-                    Long.MIN_VALUE;
+            BigInteger maximum = results.get(0);
 
-            for (long result : results) {
-                maximum =
-                        Math.max(
-                                maximum,
-                                result
-                        );
+            for (BigInteger result : results) {
+
+                if (result.compareTo(maximum) > 0) {
+                    maximum = result;
+                }
             }
 
             return maximum;
         }
 
-        long total = 0;
+        BigInteger total = BigInteger.ZERO;
 
-        for (long result : results) {
-            total += result;
+        for (BigInteger result : results) {
+            total = total.add(result);
         }
 
         return total;

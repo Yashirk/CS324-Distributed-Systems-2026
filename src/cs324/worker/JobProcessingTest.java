@@ -1,12 +1,17 @@
+
 package cs324.worker;
 
+import cs324.bootstrap.BootstrapService;
 import cs324.common.JobRequest;
 import cs324.common.JobResult;
 import cs324.common.JobType;
+import cs324.common.WorkerInfo;
 
+import java.math.BigInteger;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.util.Arrays;
+import java.util.List;
 
 public class JobProcessingTest {
 
@@ -14,238 +19,185 @@ public class JobProcessingTest {
 
         try {
 
-            System.out.println(
-                    "======================================"
-            );
+            Registry registry =
+                    LocateRegistry.getRegistry("localhost", 1099);
 
-            System.out.println(
-                    "CS324 DISTRIBUTED JOB TEST"
-            );
+            BootstrapService bootstrap =
+                    (BootstrapService) registry.lookup("BootstrapService");
 
-            System.out.println(
-                    "======================================"
-            );
+            List<WorkerInfo> workers = bootstrap.getActiveWorkers();
 
-
-            // Connect to Worker 1
-            Registry registry1 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2001
-                    );
-
-            WorkerService worker1 =
-                    (WorkerService)
-                            registry1.lookup(
-                                    "Worker1"
-                            );
-
-
-            // Connect to Worker 2
-            Registry registry2 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2002
-                    );
-
-            WorkerService worker2 =
-                    (WorkerService)
-                            registry2.lookup(
-                                    "Worker2"
-                            );
-
-
-            // Connect to Worker 3
-            Registry registry3 =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            2003
-                    );
-
-            WorkerService worker3 =
-                    (WorkerService)
-                            registry3.lookup(
-                                    "Worker3"
-                            );
-
-
-            // -----------------------------------
-            // ELECT A COORDINATOR FIRST
-            // -----------------------------------
-
-            System.out.println(
-                    "Starting leader election..."
-            );
-
-            worker1.startElection();
-
-
-            int coordinatorId =
-                    worker1.getCoordinatorId();
-
-
-            System.out.println(
-                    "Coordinator = Worker "
-                            + coordinatorId
-            );
-
-
-            WorkerService coordinator;
-
-
-            if (coordinatorId == 1) {
-
-                coordinator = worker1;
-
-            } else if (coordinatorId == 2) {
-
-                coordinator = worker2;
-
-            } else if (coordinatorId == 3) {
-
-                coordinator = worker3;
-
-            } else {
-
-                throw new Exception(
-                        "No valid coordinator found."
+            if (!bootstrap.isElectionReady()) {
+                System.out.println(
+                        "Please start all selected workers first."
                 );
+                return;
             }
 
+            if (workers.isEmpty()) {
+                System.out.println("No workers available.");
+                return;
+            }
 
-            // ===================================
-            // TEST 1 - MAX
-            // ===================================
+            WorkerInfo firstWorker = workers.get(0);
 
-            JobRequest maxJob =
-                    new JobRequest(
-                            JobType.MAX,
-                            Arrays.asList(
-                                    12,
-                                    45,
-                                    7,
-                                    99,
-                                    23,
-                                    56
-                            )
+            Registry firstRegistry = LocateRegistry.getRegistry(
+                    firstWorker.getHost(),
+                    firstWorker.getRegistryPort()
+            );
+
+            WorkerService firstService = (WorkerService)
+                    firstRegistry.lookup(firstWorker.getServiceName());
+
+            int coordinatorId = firstService.getCoordinatorId();
+
+            if (coordinatorId == -1) {
+                System.out.println("No coordinator elected yet.");
+                return;
+            }
+
+            WorkerService coordinator = null;
+
+            for (WorkerInfo info : workers) {
+
+                if (info.getWorkerId() == coordinatorId) {
+
+                    Registry workerRegistry = LocateRegistry.getRegistry(
+                            info.getHost(),
+                            info.getRegistryPort()
                     );
 
+                    coordinator = (WorkerService)
+                            workerRegistry.lookup(info.getServiceName());
 
-            JobResult maxResult =
-                    coordinator.submitJob(
-                            maxJob
-                    );
+                    break;
+                }
+            }
 
+            if (coordinator == null) {
+                System.out.println("Coordinator not found.");
+                return;
+            }
+
+            System.out.println("====================================");
+            System.out.println("       CS324 JOB PROCESSING TEST");
+            System.out.println("====================================");
+
+            System.out.println(
+                    "Coordinator: Worker " + coordinatorId
+            );
+
+            System.out.println(
+                    "Active Workers: " + workers.size()
+            );
 
             System.out.println();
-            System.out.println(
-                    "MAX RESULT = "
-                            + maxResult.getResult()
+
+            // =====================================
+            // TEST 1: MAX
+            // =====================================
+
+            JobRequest maxJob = new JobRequest(
+                    JobType.MAX,
+                    Arrays.asList(12, 45, 7, 99, 23)
             );
 
-
-            // ===================================
-            // TEST 2 - PRIMESUM
-            // ===================================
-
-            JobRequest primeSumJob =
-                    new JobRequest(
-                            JobType.PRIMESUM,
-                            1,
-                            10
-                    );
-
-
-            JobResult primeSumResult =
-                    coordinator.submitJob(
-                            primeSumJob
-                    );
-
-
-            System.out.println(
-                    "PRIMESUM RESULT = "
-                            + primeSumResult.getResult()
-            );
-
-
-            // ===================================
-            // TEST 3 - PRIMECOUNT
-            // ===================================
-
-            JobRequest primeCountJob =
-                    new JobRequest(
-                            JobType.PRIMECOUNT,
-                            Arrays.asList(
-                                    2,
-                                    4,
-                                    5,
-                                    7,
-                                    9,
-                                    11,
-                                    12
-                            )
-                    );
-
-
-            JobResult primeCountResult =
-                    coordinator.submitJob(
-                            primeCountJob
-                    );
-
-
-            System.out.println(
-                    "PRIMECOUNT RESULT = "
-                            + primeCountResult.getResult()
-            );
-
-
-            // ===================================
-            // CHECK RESULTS
-            // ===================================
+            JobResult maxResult = coordinator.submitJob(maxJob);
 
             boolean maxPassed =
-                    maxResult.getResult() == 99;
+                    maxResult.getResult().equals(
+                            BigInteger.valueOf(99)
+                    );
 
-            boolean primeSumPassed =
-                    primeSumResult.getResult() == 17;
-
-            boolean primeCountPassed =
-                    primeCountResult.getResult() == 4;
-
-
-            System.out.println();
             System.out.println(
-                    "======================================"
+                    "MAX Result: " + maxResult.getResult()
             );
 
-            if (
-                    maxPassed
-                            &&
-                            primeSumPassed
-                            &&
-                            primeCountPassed
-            ) {
+            System.out.println(
+                    "MAX Test: " + (maxPassed ? "PASSED" : "FAILED")
+            );
 
+            System.out.println();
+
+            // =====================================
+            // TEST 2: PRIMESUM
+            // =====================================
+
+            JobRequest primeSumJob = new JobRequest(
+                    JobType.PRIMESUM,
+                    2,
+                    10
+            );
+
+            JobResult primeSumResult =
+                    coordinator.submitJob(primeSumJob);
+
+            boolean primeSumPassed =
+                    primeSumResult.getResult().equals(
+                            BigInteger.valueOf(17)
+                    );
+
+            System.out.println(
+                    "PRIMESUM Result: " + primeSumResult.getResult()
+            );
+
+            System.out.println(
+                    "PRIMESUM Test: "
+                            + (primeSumPassed ? "PASSED" : "FAILED")
+            );
+
+            System.out.println();
+
+            // =====================================
+            // TEST 3: PRIMECOUNT
+            // =====================================
+
+            JobRequest primeCountJob = new JobRequest(
+                    JobType.PRIMECOUNT,
+                    Arrays.asList(2, 3, 5, 7, 8, 9)
+            );
+
+            JobResult primeCountResult =
+                    coordinator.submitJob(primeCountJob);
+
+            boolean primeCountPassed =
+                    primeCountResult.getResult().equals(
+                            BigInteger.valueOf(4)
+                    );
+
+            System.out.println(
+                    "PRIMECOUNT Result: " + primeCountResult.getResult()
+            );
+
+            System.out.println(
+                    "PRIMECOUNT Test: "
+                            + (primeCountPassed ? "PASSED" : "FAILED")
+            );
+
+            System.out.println();
+
+            // =====================================
+            // FINAL RESULTS
+            // =====================================
+
+            System.out.println("====================================");
+
+            if (maxPassed && primeSumPassed && primeCountPassed) {
                 System.out.println(
-                        "ALL DISTRIBUTED JOB TESTS PASSED."
+                        "ALL JOB PROCESSING TESTS PASSED."
                 );
-
             } else {
-
                 System.out.println(
-                        "JOB PROCESSING TEST FAILED."
+                        "SOME JOB PROCESSING TESTS FAILED."
                 );
             }
 
-            System.out.println(
-                    "======================================"
-            );
-
+            System.out.println("====================================");
 
         } catch (Exception e) {
 
             System.err.println(
-                    "Distributed job test failed."
+                    "Job Processing Test Failed: " + e.getMessage()
             );
 
             e.printStackTrace();

@@ -1,3 +1,4 @@
+
 package cs324.worker;
 
 import cs324.bootstrap.BootstrapService;
@@ -8,6 +9,7 @@ import cs324.common.WorkerInfo;
 import cs324.job.JobCalculator;
 import cs324.job.JobDistributor;
 
+import java.math.BigInteger;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
@@ -19,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -27,366 +28,176 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
-public class WorkerNode
-        extends UnicastRemoteObject
+public class WorkerNode extends UnicastRemoteObject
         implements WorkerService {
 
-
-    // =====================================================
-    // WORKER INFORMATION
-    // =====================================================
-
     private final int workerId;
-
     private final String host;
-
     private final int registryPort;
-
     private final String serviceName;
 
+    private final AtomicInteger jac = new AtomicInteger(0);
+    private final AtomicInteger coordinatorId = new AtomicInteger(-1);
 
-    // =====================================================
-    // JOB ALLOCATION COUNTER
-    // =====================================================
-
-    /*
-     * JAC = Job Allocation Counter
-     *
-     * It increases when this Worker is Coordinator
-     * and assigns work to another Worker.
-     */
-    private final AtomicInteger jac =
-            new AtomicInteger(0);
-
-
-    // =====================================================
-    // CURRENT COORDINATOR
-    // =====================================================
-
-    /*
-     * -1 means no Coordinator has been elected yet.
-     */
-    private final AtomicInteger coordinatorId =
-            new AtomicInteger(-1);
-
-
-    // =====================================================
-    // NEIGHBOURS
-    // =====================================================
-
-    /*
-     * Key   = Worker ID
-     * Value = Worker information
-     */
     private final Map<Integer, WorkerInfo> neighbours =
             new ConcurrentHashMap<>();
 
-
-    // =====================================================
-    // DUPLICATE MESSAGE PROTECTION
-    // =====================================================
-
-    /*
-     * Prevents the same election message
-     * being processed more than once.
-     */
     private final Set<String> processedElections =
             ConcurrentHashMap.newKeySet();
 
-
-    /*
-     * Prevents the same Coordinator announcement
-     * being processed repeatedly.
-     */
     private final Set<String> processedCoordinatorMessages =
             ConcurrentHashMap.newKeySet();
 
-
-    // =====================================================
-    // THREAD POOLS
-    // =====================================================
-
-    /*
-     * Used by this Worker when processing
-     * partial computational jobs.
-     */
     private final ExecutorService workerJobPool =
             Executors.newCachedThreadPool();
 
-
-    /*
-     * Used when this Worker is Coordinator
-     * and distributes jobs to Workers.
-     */
     private final ExecutorService coordinatorJobPool =
             Executors.newCachedThreadPool();
 
-
-    // =====================================================
-    // COORDINATOR TERM
-    // =====================================================
-
-    /*
-     * Counts the number of complete jobs handled
-     * during the current Coordinator term.
-     */
-    private final AtomicInteger termJobCount =
-            new AtomicInteger(0);
-
-
+    private final AtomicInteger termJobCount = new AtomicInteger(0);
     private static final int MAX_JOBS_PER_TERM = 5;
 
-
-    // =====================================================
-    // CONSTRUCTOR
-    // =====================================================
-
-    public WorkerNode(
-            int workerId,
-            String host,
-            int registryPort)
+    public WorkerNode(int workerId, String host, int registryPort)
             throws RemoteException {
 
         super();
 
-        this.workerId =
-                workerId;
-
-        this.host =
-                host;
-
-        this.registryPort =
-                registryPort;
-
-        this.serviceName =
-                "Worker" + workerId;
+        this.workerId = workerId;
+        this.host = host;
+        this.registryPort = registryPort;
+        this.serviceName = "Worker" + workerId;
     }
 
-
-    // =====================================================
-    // GET WORKER ID
-    // =====================================================
+    // ==========================================
+    // WORKER INFORMATION
+    // ==========================================
 
     @Override
-    public int getWorkerId()
-            throws RemoteException {
-
+    public int getWorkerId() throws RemoteException {
         return workerId;
     }
 
-
-    // =====================================================
-    // GET JAC
-    // =====================================================
-
     @Override
-    public int getJAC()
-            throws RemoteException {
-
+    public int getJAC() throws RemoteException {
         return jac.get();
     }
 
-
-    // =====================================================
-    // INCREMENT JAC
-    // =====================================================
-
     @Override
-    public void incrementJAC()
-            throws RemoteException {
+    public void incrementJAC() throws RemoteException {
 
-        int newValue =
-                jac.incrementAndGet();
-
+        int newValue = jac.incrementAndGet();
 
         System.out.println(
-                "Worker "
-                        + workerId
-                        + " JAC increased to "
-                        + newValue
+                "Worker " + workerId
+                        + " JAC increased to " + newValue
         );
     }
 
-
-    // =====================================================
-    // ADD NEIGHBOUR
-    // =====================================================
+    // ==========================================
+    // NEIGHBOUR MANAGEMENT
+    // ==========================================
 
     @Override
-    public void addNeighbour(
-            WorkerInfo worker)
+    public void addNeighbour(WorkerInfo worker)
             throws RemoteException {
-
 
         if (worker == null) {
             return;
         }
 
-
-        /*
-         * A Worker must not add itself
-         * as its own neighbour.
-         */
-        if (worker.getWorkerId()
-                == workerId) {
-
+        if (worker.getWorkerId() == workerId) {
             return;
         }
 
-
-        neighbours.put(
-                worker.getWorkerId(),
-                worker
-        );
-
+        neighbours.put(worker.getWorkerId(), worker);
 
         System.out.println(
-                "Worker "
-                        + workerId
+                "Worker " + workerId
                         + " added Worker "
                         + worker.getWorkerId()
                         + " as neighbour."
         );
     }
 
-
-    // =====================================================
-    // GET NEIGHBOURS
-    // =====================================================
-
     @Override
     public List<WorkerInfo> getNeighbours()
             throws RemoteException {
 
-
         List<WorkerInfo> result =
-                new ArrayList<>(
-                        neighbours.values()
-                );
-
+                new ArrayList<>(neighbours.values());
 
         result.sort(
-                Comparator.comparingInt(
-                        WorkerInfo::getWorkerId
-                )
+                Comparator.comparingInt(WorkerInfo::getWorkerId)
         );
-
 
         return result;
     }
 
-
-    // =====================================================
-    // START LEADER ELECTION
-    // =====================================================
+    // ==========================================
+    // LEADER ELECTION
+    // ==========================================
 
     @Override
-    public void startElection()
-            throws RemoteException {
+    public void startElection() throws RemoteException {
 
+        if (coordinatorId.get() == -1
+                && !getBootstrapService().isElectionReady()) {
 
-        String electionId =
-                UUID.randomUUID()
-                        .toString();
+            throw new RemoteException(
+                    "Waiting for all selected workers before the first election."
+            );
+        }
 
+        String electionId = UUID.randomUUID().toString();
 
         System.out.println();
+        System.out.println("========================================");
         System.out.println(
-                "========================================"
+                "Worker " + workerId + " STARTING LEADER ELECTION"
         );
+        System.out.println("Election ID: " + electionId);
+        System.out.println("========================================");
 
-        System.out.println(
-                "Worker "
-                        + workerId
-                        + " STARTING LEADER ELECTION"
-        );
-
-        System.out.println(
-                "Election ID: "
-                        + electionId
-        );
-
-        System.out.println(
-                "========================================"
-        );
-
-
-        /*
-         * Propagate the election and collect
-         * all reachable candidates.
-         */
         List<ElectionCandidate> candidates =
-                processElection(
-                        electionId,
-                        -1
-                );
-
+                processElection(electionId, -1);
 
         if (candidates.isEmpty()) {
-
             throw new RemoteException(
                     "No election candidates were found."
             );
         }
 
-
-        /*
-         * Election rule:
-         *
-         * 1. Lowest JAC wins.
-         * 2. If equal JAC, highest Worker ID wins.
-         */
-        ElectionCandidate winner =
-                candidates.stream()
-                        .min(
-                                Comparator
-                                        .comparingInt(
-                                                ElectionCandidate::getJac
-                                        )
-                                        .thenComparing(
-                                                Comparator.comparingInt(
-                                                        ElectionCandidate::getWorkerId
-                                                ).reversed()
-                                        )
+        ElectionCandidate winner = candidates.stream()
+                .min(
+                        Comparator.comparingInt(ElectionCandidate::getJac)
+                                .thenComparing(
+                                        Comparator.comparingInt(
+                                                ElectionCandidate::getWorkerId
+                                        ).reversed()
+                                )
+                )
+                .orElseThrow(
+                        () -> new RemoteException(
+                                "Unable to select Coordinator."
                         )
-                        .orElseThrow(
-                                () ->
-                                        new RemoteException(
-                                                "Unable to select Coordinator."
-                                        )
-                        );
-
+                );
 
         System.out.println();
-        System.out.println(
-                "Election candidates:"
-        );
+        System.out.println("Election candidates:");
 
-
-        for (ElectionCandidate candidate
-                : candidates) {
+        for (ElectionCandidate candidate : candidates) {
 
             System.out.println(
-                    "Worker "
-                            + candidate.getWorkerId()
-                            + " | JAC = "
-                            + candidate.getJac()
+                    "Worker " + candidate.getWorkerId()
+                            + " | JAC = " + candidate.getJac()
             );
         }
 
-
         System.out.println();
         System.out.println(
-                "ELECTED COORDINATOR: Worker "
-                        + winner.getWorkerId()
+                "ELECTED COORDINATOR: Worker " + winner.getWorkerId()
         );
 
-
-        /*
-         * Propagate the election result
-         * throughout the network.
-         */
         announceCoordinator(
                 electionId,
                 winner.getWorkerId(),
@@ -394,10 +205,9 @@ public class WorkerNode
         );
     }
 
-
-    // =====================================================
+    // ==========================================
     // PROCESS ELECTION
-    // =====================================================
+    // ==========================================
 
     @Override
     public List<ElectionCandidate> processElection(
@@ -405,102 +215,58 @@ public class WorkerNode
             int senderId)
             throws RemoteException {
 
+        List<ElectionCandidate> candidates = new ArrayList<>();
 
-        List<ElectionCandidate> candidates =
-                new ArrayList<>();
-
-
-        /*
-         * If this Worker has already processed
-         * this election, stop here.
-         */
-        if (!processedElections.add(
-                electionId)) {
-
+        if (!processedElections.add(electionId)) {
             return candidates;
         }
 
-
         System.out.println(
-                "Worker "
-                        + workerId
-                        + " processing election "
-                        + electionId
+                "Worker " + workerId
+                        + " processing election " + electionId
         );
 
-
-        /*
-         * Add this Worker's election information.
-         */
         candidates.add(
-                new ElectionCandidate(
-                        workerId,
-                        jac.get()
-                )
+                new ElectionCandidate(workerId, jac.get())
         );
 
+        for (WorkerInfo neighbour : neighbours.values()) {
 
-        /*
-         * Forward election to neighbours.
-         */
-        for (WorkerInfo neighbour
-                : neighbours.values()) {
-
-
-            /*
-             * Do not immediately send the message
-             * back to the Worker that sent it.
-             */
-            if (neighbour.getWorkerId()
-                    == senderId) {
-
+            if (neighbour.getWorkerId() == senderId) {
                 continue;
             }
-
 
             try {
 
                 WorkerService remoteWorker =
-                        getRemoteWorker(
-                                neighbour
-                        );
+                        getRemoteWorker(neighbour);
 
-
-                List<ElectionCandidate>
-                        remoteCandidates =
+                List<ElectionCandidate> remoteCandidates =
                         remoteWorker.processElection(
                                 electionId,
                                 workerId
                         );
 
-
                 if (remoteCandidates != null) {
-
-                    candidates.addAll(
-                            remoteCandidates
-                    );
+                    candidates.addAll(remoteCandidates);
                 }
-
 
             } catch (Exception e) {
 
                 System.err.println(
-                        "Worker "
-                                + workerId
+                        "Worker " + workerId
                                 + " could not send election to Worker "
                                 + neighbour.getWorkerId()
                 );
             }
         }
 
-
         return candidates;
     }
 
-
-    // =====================================================
+    // ==========================================
     // ANNOUNCE COORDINATOR
-    // =====================================================
+    // ==========================================
 
     @Override
     public void announceCoordinator(
@@ -509,61 +275,30 @@ public class WorkerNode
             int senderId)
             throws RemoteException {
 
-
-        /*
-         * Prevent duplicate Coordinator messages.
-         */
-        if (!processedCoordinatorMessages.add(
-                electionId)) {
-
+        if (!processedCoordinatorMessages.add(electionId)) {
             return;
         }
 
-
-        coordinatorId.set(
-                newCoordinatorId
-        );
-
-
-        /*
-         * A new Coordinator means a new term.
-         */
-        termJobCount.set(
-                0
-        );
-
+        coordinatorId.set(newCoordinatorId);
+        termJobCount.set(0);
 
         System.out.println(
-                "Worker "
-                        + workerId
+                "Worker " + workerId
                         + " recognises Worker "
                         + newCoordinatorId
                         + " as Coordinator."
         );
 
+        for (WorkerInfo neighbour : neighbours.values()) {
 
-        /*
-         * Forward Coordinator message
-         * through the Worker graph.
-         */
-        for (WorkerInfo neighbour
-                : neighbours.values()) {
-
-
-            if (neighbour.getWorkerId()
-                    == senderId) {
-
+            if (neighbour.getWorkerId() == senderId) {
                 continue;
             }
-
 
             try {
 
                 WorkerService remoteWorker =
-                        getRemoteWorker(
-                                neighbour
-                        );
-
+                        getRemoteWorker(neighbour);
 
                 remoteWorker.announceCoordinator(
                         electionId,
@@ -571,12 +306,10 @@ public class WorkerNode
                         workerId
                 );
 
-
             } catch (Exception e) {
 
                 System.err.println(
-                        "Worker "
-                                + workerId
+                        "Worker " + workerId
                                 + " could not send Coordinator message to Worker "
                                 + neighbour.getWorkerId()
                 );
@@ -584,66 +317,36 @@ public class WorkerNode
         }
     }
 
-
-    // =====================================================
-    // GET COORDINATOR
-    // =====================================================
-
     @Override
-    public int getCoordinatorId()
-            throws RemoteException {
-
+    public int getCoordinatorId() throws RemoteException {
         return coordinatorId.get();
     }
 
-
-    // =====================================================
+    // ==========================================
     // SUBMIT COMPLETE JOB
-    // =====================================================
+    // ==========================================
 
     @Override
-    public JobResult submitJob(
-            JobRequest job)
+    public JobResult submitJob(JobRequest job)
             throws RemoteException {
 
-
         if (job == null) {
-
-            throw new RemoteException(
-                    "Job cannot be null."
-            );
+            throw new RemoteException("Job cannot be null.");
         }
 
-
-        /*
-         * Only the elected Coordinator
-         * may accept Client jobs.
-         */
-        if (coordinatorId.get()
-                != workerId) {
+        if (coordinatorId.get() != workerId) {
 
             throw new RemoteException(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " is not the Coordinator. "
                             + "Current Coordinator is Worker "
                             + coordinatorId.get()
             );
         }
 
+        int jobNumber = termJobCount.incrementAndGet();
 
-        /*
-         * Count this complete job.
-         */
-        int jobNumber =
-                termJobCount.incrementAndGet();
-
-
-        /*
-         * Maximum of five jobs per term.
-         */
-        if (jobNumber
-                > MAX_JOBS_PER_TERM) {
+        if (jobNumber > MAX_JOBS_PER_TERM) {
 
             termJobCount.decrementAndGet();
 
@@ -653,194 +356,101 @@ public class WorkerNode
             );
         }
 
-
         System.out.println();
+        System.out.println("========================================");
         System.out.println(
-                "========================================"
-        );
-
-        System.out.println(
-                "Coordinator Worker "
-                        + workerId
+                "Coordinator Worker " + workerId
                         + " received "
-                        + job.getJobType()
-                        + " job."
+                        + job.getJobType() + " job."
         );
 
         System.out.println(
-                "Term Job: "
-                        + jobNumber
-                        + "/"
-                        + MAX_JOBS_PER_TERM
+                "Term Job: " + jobNumber + "/" + MAX_JOBS_PER_TERM
         );
 
-        System.out.println(
-                "Job ID: "
-                        + job.getJobId()
-        );
+        System.out.println("Job ID: " + job.getJobId());
+        System.out.println("========================================");
 
-        System.out.println(
-                "========================================"
-        );
-
-
-        /*
-         * Ask Bootstrap for all active Workers.
-         */
-        BootstrapService bootstrap =
-                getBootstrapService();
-
+        BootstrapService bootstrap = getBootstrapService();
 
         List<WorkerInfo> activeWorkers =
                 bootstrap.getActiveWorkers();
 
-
-        if (activeWorkers == null
-                ||
-                activeWorkers.isEmpty()) {
+        if (activeWorkers == null || activeWorkers.isEmpty()) {
 
             throw new RemoteException(
                     "No active Workers are available."
             );
         }
 
-
         activeWorkers.sort(
-                Comparator.comparingInt(
-                        WorkerInfo::getWorkerId
-                )
+                Comparator.comparingInt(WorkerInfo::getWorkerId)
         );
 
-
-        /*
-         * Split the job as evenly as possible.
-         */
         List<JobRequest> partialJobs =
                 JobDistributor.splitJob(
                         job,
                         activeWorkers.size()
                 );
 
-
-        if (partialJobs == null
-                ||
-                partialJobs.isEmpty()) {
+        if (partialJobs == null || partialJobs.isEmpty()) {
 
             throw new RemoteException(
                     "Job could not be divided."
             );
         }
 
+        // Assign partial jobs to workers
+        List<Future<BigInteger>> futures = new ArrayList<>();
 
-        List<Future<Long>> futures =
-                new ArrayList<>();
+        for (int i = 0; i < partialJobs.size(); i++) {
 
+            final JobRequest partialJob = partialJobs.get(i);
+            final WorkerInfo targetWorker = activeWorkers.get(i);
 
-        /*
-         * Assign each partial job to a Worker.
-         */
-        for (int i = 0;
-             i < partialJobs.size();
-             i++) {
-
-
-            final JobRequest partialJob =
-                    partialJobs.get(i);
-
-
-            final WorkerInfo targetWorker =
-                    activeWorkers.get(i);
-
-
-            /*
-             * JAC increases when the Coordinator
-             * assigns work to another Worker.
-             */
-            if (targetWorker.getWorkerId()
-                    != workerId) {
-
+            if (targetWorker.getWorkerId() != workerId) {
                 incrementJAC();
             }
 
+            Future<BigInteger> future =
+                    coordinatorJobPool.submit(() -> {
 
-            Future<Long> future =
-                    coordinatorJobPool.submit(
-                            () -> {
+                        System.out.println(
+                                "Coordinator Worker " + workerId
+                                        + " assigning partial job to Worker "
+                                        + targetWorker.getWorkerId()
+                        );
 
+                        if (targetWorker.getWorkerId() == workerId) {
+                            return executePartialJob(partialJob);
+                        }
 
-                                System.out.println(
-                                        "Coordinator Worker "
-                                                + workerId
-                                                + " assigning partial job to Worker "
-                                                + targetWorker.getWorkerId()
-                                );
+                        WorkerService remoteWorker =
+                                getRemoteWorker(targetWorker);
 
+                        return remoteWorker.executePartialJob(partialJob);
+                    });
 
-                                /*
-                                 * If the Coordinator itself receives
-                                 * the partial job, execute locally.
-                                 */
-                                if (targetWorker.getWorkerId()
-                                        == workerId) {
-
-                                    return executePartialJob(
-                                            partialJob
-                                    );
-                                }
-
-
-                                /*
-                                 * Otherwise send through RMI.
-                                 */
-                                WorkerService remoteWorker =
-                                        getRemoteWorker(
-                                                targetWorker
-                                        );
-
-
-                                return remoteWorker
-                                        .executePartialJob(
-                                                partialJob
-                                        );
-                            }
-                    );
-
-
-            futures.add(
-                    future
-            );
+            futures.add(future);
         }
 
+        // Collect partial results
+        List<BigInteger> partialResults = new ArrayList<>();
 
-        /*
-         * Collect all partial results.
-         */
-        List<Long> partialResults =
-                new ArrayList<>();
-
-
-        for (Future<Long> future
-                : futures) {
-
+        for (Future<BigInteger> future : futures) {
 
             try {
 
-                partialResults.add(
-                        future.get()
-                );
-
+                partialResults.add(future.get());
 
             } catch (InterruptedException e) {
 
-                Thread.currentThread()
-                        .interrupt();
-
+                Thread.currentThread().interrupt();
 
                 throw new RemoteException(
                         "Job processing was interrupted.",
                         e
                 );
-
 
             } catch (ExecutionException e) {
 
@@ -851,108 +461,68 @@ public class WorkerNode
             }
         }
 
-
-        /*
-         * Combine the partial answers.
-         */
-        long finalResult =
+        // Combine the answers
+        BigInteger finalResult =
                 JobDistributor.combineResults(
                         job.getJobType(),
                         partialResults
                 );
 
-
-        JobResult result =
-                new JobResult(
-                        job.getJobId(),
-                        finalResult,
-                        workerId
-                );
-
+        JobResult result = new JobResult(
+                job.getJobId(),
+                finalResult,
+                workerId
+        );
 
         System.out.println();
-        System.out.println(
-                "FINAL RESULT = "
-                        + finalResult
-        );
-
+        System.out.println("FINAL RESULT = " + finalResult);
 
         System.out.println(
-                "Completed by Coordinator Worker "
-                        + workerId
+                "Completed by Coordinator Worker " + workerId
         );
 
-
-        /*
-         * After Job 5, end this Coordinator term
-         * and automatically start another election.
-         */
-        if (jobNumber
-                == MAX_JOBS_PER_TERM) {
-
+        // Start another election after 5 jobs
+        if (jobNumber == MAX_JOBS_PER_TERM) {
 
             System.out.println();
-            System.out.println(
-                    "========================================"
-            );
+            System.out.println("========================================");
 
             System.out.println(
-                    "Coordinator Worker "
-                            + workerId
+                    "Coordinator Worker " + workerId
                             + " has completed 5 jobs."
             );
 
-            System.out.println(
-                    "Coordinator term has ended."
-            );
+            System.out.println("Coordinator term has ended.");
+            System.out.println("Starting new leader election...");
+            System.out.println("========================================");
 
-            System.out.println(
-                    "Starting new leader election..."
-            );
+            new Thread(() -> {
 
-            System.out.println(
-                    "========================================"
-            );
+                try {
+                    startElection();
 
+                } catch (RemoteException e) {
 
-            /*
-             * Start election asynchronously so the
-             * fifth job result can still return
-             * to the Client immediately.
-             */
-            new Thread(
-                    () -> {
+                    System.err.println(
+                            "Automatic leader election failed."
+                    );
 
-                        try {
+                    e.printStackTrace();
+                }
 
-                            startElection();
-
-                        } catch (RemoteException e) {
-
-                            System.err.println(
-                                    "Automatic leader election failed."
-                            );
-
-                            e.printStackTrace();
-                        }
-                    }
-            ).start();
+            }).start();
         }
-
 
         return result;
     }
 
-
-    // =====================================================
+    // ==========================================
     // EXECUTE PARTIAL JOB
-    // =====================================================
+    // ==========================================
 
     @Override
-    public long executePartialJob(
-            JobRequest partialJob)
+    public BigInteger executePartialJob(JobRequest partialJob)
             throws RemoteException {
-
 
         if (partialJob == null) {
 
@@ -961,113 +531,79 @@ public class WorkerNode
             );
         }
 
-
         System.out.println(
-                "Worker "
-                        + workerId
+                "Worker " + workerId
                         + " processing partial "
                         + partialJob.getJobType()
                         + " job."
         );
 
-
-        Future<Long> future =
+        Future<BigInteger> future =
                 workerJobPool.submit(
-                        () ->
-                                JobCalculator.calculate(
-                                        partialJob
-                                )
+                        () -> JobCalculator.calculate(partialJob)
                 );
-
 
         try {
 
-            long result =
-                    future.get();
-
+            BigInteger result = future.get();
 
             System.out.println(
-                    "Worker "
-                            + workerId
-                            + " partial result = "
-                            + result
+                    "Worker " + workerId
+                            + " partial result = " + result
             );
-
 
             return result;
 
-
         } catch (InterruptedException e) {
 
-            Thread.currentThread()
-                    .interrupt();
-
+            Thread.currentThread().interrupt();
 
             throw new RemoteException(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " job was interrupted.",
                     e
             );
 
-
         } catch (ExecutionException e) {
 
             throw new RemoteException(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " failed to process partial job.",
                     e.getCause()
             );
         }
     }
 
-
-    // =====================================================
+    // ==========================================
     // CONNECT TO REMOTE WORKER
-    // =====================================================
+    // ==========================================
 
-    private WorkerService getRemoteWorker(
-            WorkerInfo worker)
+    private WorkerService getRemoteWorker(WorkerInfo worker)
             throws Exception {
 
-
-        Registry registry =
-                LocateRegistry.getRegistry(
-                        worker.getHost(),
-                        worker.getRegistryPort()
-                );
-
+        Registry registry = LocateRegistry.getRegistry(
+                worker.getHost(),
+                worker.getRegistryPort()
+        );
 
         return (WorkerService)
-                registry.lookup(
-                        worker.getServiceName()
-                );
+                registry.lookup(worker.getServiceName());
     }
 
-
-    // =====================================================
+    // ==========================================
     // CONNECT TO BOOTSTRAP
-    // =====================================================
+    // ==========================================
 
     private BootstrapService getBootstrapService()
             throws RemoteException {
 
-
         try {
 
             Registry registry =
-                    LocateRegistry.getRegistry(
-                            "localhost",
-                            1099
-                    );
-
+                    LocateRegistry.getRegistry("localhost", 1099);
 
             return (BootstrapService)
-                    registry.lookup(
-                            "BootstrapService"
-                    );
-
+                    registry.lookup("BootstrapService");
 
         } catch (Exception e) {
 
@@ -1078,10 +614,9 @@ public class WorkerNode
         }
     }
 
-
-    // =====================================================
-    // THIS WORKER'S INFO
-    // =====================================================
+    // ==========================================
+    // WORKER INFORMATION
+    // ==========================================
 
     private WorkerInfo getWorkerInfo() {
 
@@ -1093,201 +628,109 @@ public class WorkerNode
         );
     }
 
-
-    // =====================================================
+    // ==========================================
     // CONNECT TO NEIGHBOUR
-    // =====================================================
+    // ==========================================
 
-    private void connectToNeighbour(
-            WorkerInfo neighbour) {
-
+    private boolean connectToNeighbour(WorkerInfo neighbour) {
 
         if (neighbour == null) {
 
             System.out.println(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " has no initial neighbour."
             );
 
-            return;
+            return true;
         }
 
-
-        if (neighbour.getWorkerId()
-                == workerId) {
-
-            return;
+        if (neighbour.getWorkerId() == workerId) {
+            return false;
         }
-
 
         try {
 
-            /*
-             * Add neighbour locally.
-             */
-            addNeighbour(
-                    neighbour
-            );
+            addNeighbour(neighbour);
 
-
-            /*
-             * Connect remotely.
-             */
             WorkerService remoteWorker =
-                    getRemoteWorker(
-                            neighbour
-                    );
+                    getRemoteWorker(neighbour);
 
-
-            /*
-             * Add this Worker as neighbour
-             * on the other Worker as well.
-             */
-            remoteWorker.addNeighbour(
-                    getWorkerInfo()
-            );
-
+            remoteWorker.addNeighbour(getWorkerInfo());
 
             System.out.println(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " successfully connected to Worker "
                             + neighbour.getWorkerId()
             );
 
+            return true;
 
         } catch (Exception e) {
 
             System.err.println(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " failed to connect to Worker "
                             + neighbour.getWorkerId()
             );
 
             e.printStackTrace();
+            return false;
         }
     }
 
-
-    // =====================================================
+    // ==========================================
     // PRINT WORKER DETAILS
-    // =====================================================
+    // ==========================================
 
     private void printWorkerDetails() {
 
-
         System.out.println();
-        System.out.println(
-                "========================================"
-        );
+        System.out.println("========================================");
+        System.out.println("             CS324 WORKER NODE");
+        System.out.println("========================================");
 
-        System.out.println(
-                "             CS324 WORKER NODE"
-        );
+        System.out.println("Worker ID: " + workerId);
+        System.out.println("Host: " + host);
+        System.out.println("Registry Port: " + registryPort);
+        System.out.println("Service Name: " + serviceName);
+        System.out.println("JAC: " + jac.get());
+        System.out.println("Coordinator: " + coordinatorId.get());
+        System.out.println("Neighbours: " + neighbours.keySet());
 
-        System.out.println(
-                "========================================"
-        );
-
-        System.out.println(
-                "Worker ID: "
-                        + workerId
-        );
-
-        System.out.println(
-                "Host: "
-                        + host
-        );
-
-        System.out.println(
-                "Registry Port: "
-                        + registryPort
-        );
-
-        System.out.println(
-                "Service Name: "
-                        + serviceName
-        );
-
-        System.out.println(
-                "JAC: "
-                        + jac.get()
-        );
-
-        System.out.println(
-                "Coordinator: "
-                        + coordinatorId.get()
-        );
-
-        System.out.println(
-                "Neighbours: "
-                        + neighbours.keySet()
-        );
-
-        System.out.println(
-                "========================================"
-        );
+        System.out.println("========================================");
     }
 
-
-    // =====================================================
+    // ==========================================
     // SHUTDOWN
-    // =====================================================
+    // ==========================================
 
     private void shutdown() {
 
-
         System.out.println(
-                "Shutting down Worker "
-                        + workerId
-                        + "..."
+                "Shutting down Worker " + workerId + "..."
         );
-
 
         try {
 
             BootstrapService bootstrap =
                     getBootstrapService();
 
-
-            bootstrap.unregisterWorker(
-                    workerId
-            );
-
+            bootstrap.unregisterWorker(workerId);
 
         } catch (Exception ignored) {
-
         }
 
-
         workerJobPool.shutdownNow();
-
         coordinatorJobPool.shutdownNow();
     }
 
-
-    // =====================================================
+    // ==========================================
     // MAIN METHOD
-    // =====================================================
+    // ==========================================
 
-    public static void main(
-            String[] args) {
+    public static void main(String[] args) {
 
-
-        /*
-         * Required arguments:
-         *
-         * Worker 1:
-         * 1 2001
-         *
-         * Worker 2:
-         * 2 2002
-         *
-         * Worker 3:
-         * 3 2003
-         */
+        // Example: Worker 1 uses arguments 1 2001
         if (args.length < 2) {
 
             System.err.println(
@@ -1301,111 +744,63 @@ public class WorkerNode
             return;
         }
 
-
         try {
 
-            int workerId =
-                    Integer.parseInt(
-                            args[0]
-                    );
+            int workerId = Integer.parseInt(args[0]);
+            int registryPort = Integer.parseInt(args[1]);
+            String host = "localhost";
 
+            WorkerNode worker = new WorkerNode(
+                    workerId,
+                    host,
+                    registryPort
+            );
 
-            int registryPort =
-                    Integer.parseInt(
-                            args[1]
-                    );
-
-
-            String host =
-                    "localhost";
-
-
-            /*
-             * Create Worker object.
-             */
-            WorkerNode worker =
-                    new WorkerNode(
-                            workerId,
-                            host,
-                            registryPort
-                    );
-
-
-            /*
-             * Start this Worker's own
-             * RMI registry.
-             */
             Registry workerRegistry =
-                    LocateRegistry.createRegistry(
-                            registryPort
-                    );
+                    LocateRegistry.createRegistry(registryPort);
 
-
-            /*
-             * Register Worker service.
-             */
             workerRegistry.rebind(
                     worker.serviceName,
                     worker
             );
 
-
-            /*
-             * Connect to Bootstrap.
-             */
             BootstrapService bootstrap =
                     worker.getBootstrapService();
 
-
-            /*
-             * Register this Worker.
-             *
-             * Bootstrap returns a random existing
-             * Worker if one is available.
-             */
             WorkerInfo initialNeighbour =
-                    bootstrap.registerWorker(
-                            worker.getWorkerInfo()
-                    );
+                    bootstrap.registerWorker(worker.getWorkerInfo());
 
+            boolean neighbourConnected =
+                    worker.connectToNeighbour(initialNeighbour);
 
-            /*
-             * Connect to returned neighbour.
-             */
-            worker.connectToNeighbour(
-                    initialNeighbour
-            );
+            if (neighbourConnected) {
 
+                bootstrap.workerReady(workerId);
+
+            } else {
+
+                System.err.println(
+                        "Worker " + workerId
+                                + " could not finish joining the worker network."
+                );
+            }
 
             worker.printWorkerDetails();
 
-
             System.out.println(
-                    "Worker "
-                            + workerId
+                    "Worker " + workerId
                             + " is running and waiting for requests."
             );
 
-
-            /*
-             * Remove Worker from Bootstrap
-             * when the process is stopped.
-             */
-            Runtime
-                    .getRuntime()
-                    .addShutdownHook(
-                            new Thread(
-                                    worker::shutdown
-                            )
-                    );
-
+            Runtime.getRuntime().addShutdownHook(
+                    new Thread(worker::shutdown)
+            );
 
         } catch (NumberFormatException e) {
 
             System.err.println(
                     "Worker ID and Registry Port must be integers."
             );
-
 
         } catch (Exception e) {
 
