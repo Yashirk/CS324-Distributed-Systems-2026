@@ -1,0 +1,81 @@
+
+syntax = "proto3";
+
+package distrilab;
+
+option java_package = "cs324.grpc";
+option java_multiple_files = true;
+
+// Worker information
+message WorkerDetails {
+  int32 workerId = 1;
+  string host = 2;
+  int32 port = 3;
+}
+
+// Register Worker
+message RegisterRequest {
+  WorkerDetails worker = 1;
+}
+
+message RegisterResponse {
+  WorkerDetails neighbour = 1;
+}
+
+// Unregister Worker
+message UnregisterRequest {
+  int32 workerId = 1;
+}
+
+// Empty message
+message Empty {}
+
+// Active Workers
+message WorkerList {
+  repeated WorkerDetails workers = 1;
+}
+
+// Random neighbour
+message RandomWorkerRequest {
+  int32 excludeWorkerId = 1;
+}
+
+message RandomWorkerResponse {
+  WorkerDetails worker = 1;
+}
+
+// Worker ready
+message ReadyRequest {
+  int32 workerId = 1;
+}
+
+message ReadyResponse {
+  bool success = 1;
+}
+
+// Election status
+message ElectionStatus {
+  bool ready = 1;
+}
+
+// Bootstrap gRPC Service
+service BootstrapService {
+
+  rpc RegisterWorker(RegisterRequest)
+      returns (RegisterResponse);
+
+  rpc UnregisterWorker(UnregisterRequest)
+      returns (Empty);
+
+  rpc GetActiveWorkers(Empty)
+      returns (WorkerList);
+
+  rpc GetRandomActiveWorker(RandomWorkerRequest)
+      returns (RandomWorkerResponse);
+
+  rpc WorkerReady(ReadyRequest)
+      returns (ReadyResponse);
+
+  rpc IsElectionReady(Empty)
+      returns (ElectionStatus);
+}
